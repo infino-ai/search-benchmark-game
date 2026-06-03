@@ -1,22 +1,25 @@
-//! Build an infino FTS index from newline-delimited JSON on stdin.
+//! Build a single-segment infino supertable from newline-delimited JSON.
 //!
 //! Each input line is `{"id": "...", "text": "...", "sort_field": <u64>}`.
-//! Only `text` is indexed — the benchmark answers count/top-k queries, so
-//! we never need to materialize stored fields. We build a single infino
-//! FTS blob (the same posting/skip-table/FST structure that a superfile
-//! embeds) and stream it to `idx/fts.blob` via `finish_to`, which keeps
-//! peak builder memory bounded by the spill threshold rather than the
-//! corpus size.
+//! Only `text` is indexed. Docs are buffered (auto-flush disabled) and a
+//! single `commit()` at the end — on a 1-thread writer pool — produces
+//! exactly one superfile segment, persisted to `<idx>/` via the local-FS
+//! storage provider so `do_query` can reopen it in a separate process.
+//!
+//! NOTE: a single segment means the entire corpus is held in memory until
+//! the final commit (the supertable write buffer does not spill). At full
+//! Wikipedia scale this needs a large-RAM host.
 
 use std::env;
-use std::fs::File;
-use std::io::{self, BufRead, BufWriter};
-use std::path::Path;
+use std::io::{self, BufRead};
 use std::sync::Arc;
 
-use infino::superfile::fts::builder::FtsBuilder;
-use infino::superfile::fts::tokenize::AsciiLowerTokenizer;
+use arrow_array::{LargeStringArray, RecordBatch};
+use infino::storage::{LocalFsStorageProvider, StorageProvider};
+use infino::supertable::Supertable;
 use serde::Deserialize;
+
+const BATCH: usize = 50_000;
 
 #[derive(Deserialize)]
 struct Doc {
@@ -25,34 +28,43 @@ struct Doc {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let out_dir = Path::new(&args[1]);
-    main_inner(out_dir).expect("build index");
-}
+    let storage: Arc<dyn StorageProvider> =
+        Arc::new(LocalFsStorageProvider::new(&args[1]).expect("open local storage"));
+    let st = Supertable::create(infino_bench::options(storage));
+    let mut writer = st.writer().expect("acquire writer");
+    let schema = infino_bench::schema();
 
-fn main_inner(out_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let mut builder = FtsBuilder::new(Arc::new(AsciiLowerTokenizer));
-    let col_id = builder.register_column("text".to_string())?;
-
+    let mut buf: Vec<String> = Vec::with_capacity(BATCH);
+    let mut total: u64 = 0;
     let stdin = io::stdin();
-    let mut doc_id: u32 = 0;
     for line in stdin.lock().lines() {
-        let line = line?;
+        let line = line.expect("read line");
         if line.trim().is_empty() {
             continue;
         }
-        let doc: Doc = serde_json::from_str(&line)?;
-        builder.add_doc(col_id, doc_id, &doc.text)?;
-        doc_id += 1;
-        if doc_id % 100_000 == 0 {
-            eprintln!("{doc_id}");
+        let doc: Doc = serde_json::from_str(&line).expect("parse json");
+        buf.push(doc.text);
+        if buf.len() == BATCH {
+            total += buf.len() as u64;
+            append(&mut writer, &schema, &mut buf);
+            if total % 1_000_000 == 0 {
+                eprintln!("{total}");
+            }
         }
     }
+    if !buf.is_empty() {
+        total += buf.len() as u64;
+        append(&mut writer, &schema, &mut buf);
+    }
 
-    let blob_path = out_dir.join("fts.blob");
-    let file = File::create(&blob_path)?;
-    let writer = BufWriter::new(file);
-    builder.finish_to(writer)?;
+    writer.commit().expect("commit");
+    drop(writer);
+    eprintln!("indexed {total} docs into the supertable");
+}
 
-    eprintln!("indexed {doc_id} docs -> {}", blob_path.display());
-    Ok(())
+fn append(writer: &mut infino::supertable::SupertableWriter, schema: &Arc<arrow_schema::Schema>, buf: &mut Vec<String>) {
+    let arr = LargeStringArray::from(buf.iter().map(String::as_str).collect::<Vec<_>>());
+    let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(arr)]).expect("record batch");
+    writer.append(&batch).expect("append batch");
+    buf.clear();
 }

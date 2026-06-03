@@ -1,50 +1,38 @@
 # infino
 
 [infino](https://github.com/infino-ai/infino) is a search-optimized
-lakehouse format: one file is a valid Apache Parquet file with an
-embedded BM25 full-text index (and vector index) baked in. This engine
-benchmarks infino's embedded FTS index directly — the same posting /
-skip-table / FST structures, BlockMaxWAND + MaxScore/Block-Max-MaxScore
-walks, and PFOR-delta posting codec that `SuperfileReader::bm25_search`
-uses.
+lakehouse format: one file is a valid Apache Parquet file with an embedded
+BM25 full-text index baked in. This engine benchmarks infino's **supertable**
+query path (manifest + per-segment fan-out) — the production query surface —
+built as multiple segments and read fully in memory.
 
-## Tokenization
+## Scope: only infino's optimized paths are benchmarked
 
-Indexing uses infino's `AsciiLowerTokenizer`: split on any byte outside
-`[A-Za-z0-9]`, ASCII-lowercase, no stemming. The benchmark corpus is
-pre-transformed to `[a-z ]+` (lowercased, non-alphabetic → space), so
-this is equivalent to whitespace splitting and matches Lucene's
-`StandardTokenizer` on this corpus. Tokens containing non-ASCII bytes
-are dropped (irrelevant after the corpus transform).
+This engine deliberately answers a command/query only when infino has a
+real, optimized implementation for it. Anything else returns `UNSUPPORTED`,
+so the reported numbers reflect infino's engine rather than a workaround.
 
-## Scoring
+| Command / query | Status | Reason |
+|---|---|---|
+| `TOP_10` / `TOP_100` / `TOP_1000` | ✅ benchmarked | ranked top-k with BlockMaxWAND / Block-Max-MaxScore pruning |
+| union (`a b`) | ✅ | `BoolMode::Or` |
+| intersection (`+a +b`) | ✅ | `BoolMode::And` |
+| `COUNT`, `TOP_*_COUNT` | ❌ UNSUPPORTED | no dedicated count path; would ride a full unpruned scoring search — not representative |
+| negation (`-term`) | ❌ UNSUPPORTED | no NOT operator in the FTS API |
+| phrase (`"a b"`) | ❌ UNSUPPORTED | no positional postings |
+| `TOP_*_FF` | ❌ UNSUPPORTED | results are score-ordered only |
 
-BM25 with Lucene defaults (`k1 = 1.2`, `b = 0.75`) and Lucene-style IDF
-`ln(1 + (N - df + 0.5) / (df + 0.5))`.
+## Tokenization & scoring
 
-## Query support
+infino's `AsciiLowerTokenizer`: split on any byte outside `[A-Za-z0-9]`,
+ASCII-lowercase, no stemming — equivalent to whitespace splitting on the
+pre-transformed corpus, matching Lucene's `StandardTokenizer` here. BM25 with
+Lucene defaults (`k1 = 1.2`, `b = 0.75`) and Lucene-style IDF.
 
-| Query / command | Status |
-|---|---|
-| Single term | ✅ |
-| Union (`a b`) | ✅ `BoolMode::Or` |
-| Intersection (`+a +b`) | ✅ `BoolMode::And` |
-| `COUNT` | ✅ full unpruned posting walk |
-| `TOP_10` / `TOP_100` / `TOP_1000` | ✅ BlockMaxWAND / Block-Max-MaxScore pruning |
-| `TOP_{1,5,10,100,1000}_COUNT` | ✅ (see note) |
-| Phrase (`"a b"`) | ❌ **UNSUPPORTED** — no positional postings |
-| `TOP_*_FF` (sort by fast field) | ❌ **UNSUPPORTED** — FTS results are score-ordered only |
-| `UNOPTIMIZED_COUNT` | ❌ **UNSUPPORTED** |
+## Build & read
 
-**`*_COUNT` note:** infino has no fused top-k + total-count collector, so
-the matching-document count comes from a full unpruned walk
-(`search(..., k = usize::MAX)`). The top-k commands (`TOP_10` etc.) use
-the pruning walks and are where infino's WAND-family algorithms show.
-
-## Layout
-
-`build_index` reads newline-delimited JSON from stdin and writes a single
-FTS blob to `idx/fts.blob`, streamed via `finish_to` so peak build memory
-is bounded by the spill threshold, not the corpus size. `do_query` mmaps
-nothing fancy — it reads the blob into memory and serves queries
-in-process.
+`build_index` streams JSON from stdin into a supertable with a multi-thread
+writer pool and a 4 GiB auto-flush threshold, producing several segments with
+bounded build memory (tuned for c7i.2xlarge / 16 GiB). `do_query` opens the
+persisted supertable and preloads every segment into an in-memory reader tier,
+so the query path is fully synchronous — no per-query async/tokio overhead.

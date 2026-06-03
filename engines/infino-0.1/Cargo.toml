@@ -3,6 +3,10 @@ name = "infino-bench"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "infino_bench"
+path = "src/lib.rs"
+
 [[bin]]
 name = "build_index"
 path = "src/bin/build_index.rs"
@@ -12,11 +16,15 @@ name = "do_query"
 path = "src/bin/do_query.rs"
 
 [dependencies]
-# Path dependency on the in-tree infino crate. The benchmark exercises
-# infino's embedded BM25 FTS index directly via FtsBuilder / FtsReader —
-# the exact code path that SuperfileReader::bm25_search delegates to.
+# Path dependency on the in-tree infino crate. This engine benchmarks the
+# supertable query path (manifest + per-segment fan-out) — the production
+# surface — built as a SINGLE segment so it is a like-for-like comparison
+# with the force-merged single-segment indexes tantivy and lucene build.
 infino = { path = "../../../infino" }
-bytes = "1"
+arrow-array = "58"
+arrow-schema = "58"
+rayon = "1"
+tokio = { version = "1", features = ["rt-multi-thread"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
