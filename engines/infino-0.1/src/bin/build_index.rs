@@ -30,7 +30,7 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     let storage: Arc<dyn StorageProvider> =
         Arc::new(LocalFsStorageProvider::new(&args[1]).expect("open local storage"));
-    let st = Supertable::create(infino_bench::options(storage));
+    let st = Supertable::create(infino_bench::options(storage)).expect("create supertable");
     let mut writer = st.writer().expect("acquire writer");
     let schema = infino_bench::schema();
 
