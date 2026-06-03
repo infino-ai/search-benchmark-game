@@ -1,72 +1,163 @@
-# Reproducing & publishing the infino benchmark
+# Benchmark runbook
 
-This fork compares **infino** against **tantivy** and **lucene** (run locally)
-plus **turbopuffer** (published numbers merged in), and publishes the dashboard
-to <https://infino-ai.github.io/search-benchmark-game>.
+End-to-end steps to reproduce infino vs tantivy vs lucene vs turbopuffer and
+publish to <https://infino-ai.github.io/search-benchmark-game>.
 
-## Engines & queries
+---
 
-| | value |
-|---|---|
-| Engines we run | `infino-0.1`, `tantivy-0.26`, `lucene-10.4.0` |
-| turbopuffer | not run — its published column is merged from `data/turbopuffer-2026-05-20.json` |
-| Box | AWS **c7i.2xlarge** (matches turbopuffer's published environment) |
-| Toolchain | Rust 1.89, Temurin 21.0.8+9 |
-
-Two benchmark modes:
-- `make bench` — **turbopuffer comparison.** Query set `queries-tpuf.txt`
-  (turbopuffer's exact 31 queries, derived from their snapshot), commands
-  `TOP_10 TOP_100 TOP_1000 COUNT` (the ones all three engines support), then
-  merges turbopuffer's column into `results.json`.
-- `make bench-full` — **standard benchmark.** Query set `queries-full.txt`
-  (962 queries incl. phrase/negated), commands incl. `TOP_100_COUNT`.
-
-infino reports `UNSUPPORTED` for phrase, negation, and the `*_FILTER_%`
-commands (no positional index, no NOT operator, no FTS+filter path). `COUNT`
-is supported but unoptimized (full search + count).
-
-## One-time: prepare the box
+## Step 1 — Provision the box (from your Mac)
 
 ```bash
-scripts/setup-aws.sh          # installs Rust 1.89, Temurin 21, build deps
+cd ~/code/infino-ai/search-benchmark-game/terraform
+terraform init        # first time only
+terraform apply       # type: yes
+# prints: public_ip and ssh command
+```
+
+Note the `public_ip`. The key is written to `terraform/sbg-bench-key.pem`.
+
+---
+
+## Step 2 — Push both repos to the box (from your Mac)
+
+The infino engine has a path dependency on the infino crate — both repos must
+be on the box.
+
+```bash
+# set this to whatever terraform printed
+export BOX=ec2-user@<public_ip>
+export KEY=~/code/infino-ai/search-benchmark-game/terraform/sbg-bench-key.pem
+
+# search-benchmark-game repo
+rsync -avz -e "ssh -i $KEY" \
+  --exclude '.git' --exclude target --exclude idx \
+  --exclude corpus.json --exclude node_modules \
+  ~/code/infino-ai/search-benchmark-game/ $BOX:~/search-benchmark-game/
+
+# infino crate (required by engines/infino-0.1/Cargo.toml path dep)
+rsync -avz -e "ssh -i $KEY" \
+  --exclude '.git' --exclude target \
+  ~/code/infino-ai/infino/ $BOX:~/infino/
+```
+
+---
+
+## Step 3 — Set up toolchains (on the box, one-time)
+
+```bash
+ssh -i $KEY $BOX
+# ---- everything below runs ON THE BOX ----
+
+tmux new -s bench      # run inside tmux so a disconnect doesn't kill the bench
+
+cd ~/search-benchmark-game
+scripts/setup-aws.sh   # installs Rust 1.89, Temurin 21.0.8+9, build deps
+
 source "$HOME/.cargo/env"
-export JAVA_HOME="$HOME/jdk-21.0.8+9" && export PATH="$PATH:$JAVA_HOME/bin"
+export JAVA_HOME="$HOME/jdk-21.0.8+9"
+export PATH="$PATH:$JAVA_HOME/bin"
 ```
 
-## Each run
+---
 
-On the c7i.2xlarge:
+## Step 4 — Run the benchmark (on the box)
+
 ```bash
-scripts/run-bench.sh          # turbopuffer comparison (default)
-# or: scripts/run-bench.sh full
+# still on the box, inside tmux, toolchains exported:
+./scripts/run-bench.sh
+# => downloads corpus (first time, ~8 GB), compiles all engines, indexes,
+#    benchmarks 3 engines × 4 commands × 31 queries × 10 iterations,
+#    merges turbopuffer's published column, writes results.json
 ```
-This downloads the corpus (first time), compiles + indexes the three engines,
-benchmarks, and writes a **merged `results.json`** at the repo root.
 
-## Publish (the easy loop)
+If you get disconnected: `ssh -i $KEY $BOX` then `tmux a -t bench`.
 
-1. Copy the `results.json` produced on the box into this repo on your laptop:
-   ```bash
-   scp ec2-user@<box>:~/search-benchmark-game/results.json ./results.json
-   ```
-2. Commit & push:
-   ```bash
-   git add results.json && git commit -m "bench: <date> run" && git push
-   ```
-3. The **Deploy benchmark site** GitHub Action publishes it automatically.
-   New numbers appear at <https://infino-ai.github.io/search-benchmark-game>
-   within ~1–2 minutes.
+When it finishes you'll see:
+```
+Done. Result: /home/ec2-user/search-benchmark-game/results.json
+```
 
-That's it — **bench → copy `results.json` → push → live.** No web build step:
-the dashboard (`web/build/`) is prebuilt and committed; the workflow just drops
-`results.json` next to it and deploys.
+---
+
+## Step 5 — Pull results and publish (from your Mac)
+
+```bash
+# copy results off the box
+scp -i $KEY $BOX:~/search-benchmark-game/results.json \
+  ~/code/infino-ai/search-benchmark-game/results.json
+
+# verify the merge — should list all 4 engines per command
+python3 -c "
+import json
+d = json.load(open('results.json'))
+for cmd, engines in d['results'].items():
+    print(cmd, '->', list(engines.keys()))
+"
+
+# publish
+cd ~/code/infino-ai/search-benchmark-game
+git add results.json
+git commit -m "bench: $(date -u +%F) turbopuffer comparison"
+git push
+# GitHub Actions deploys to https://infino-ai.github.io/search-benchmark-game
+# in ~1-2 minutes
+```
+
+---
+
+## Step 6 — Destroy the box (from your Mac)
+
+```bash
+cd ~/code/infino-ai/search-benchmark-game/terraform
+terraform destroy     # type: yes
+```
+
+Do this as soon as results.json is safely pushed. The box bills hourly.
+
+---
+
+## Subsequent runs (box already set up)
+
+On second and later runs the corpus is cached on the box (don't `make clean`).
+Only re-provision if the box was destroyed. If it still exists, skip steps 1–3
+and go straight to step 4.
+
+If the infino or search-benchmark-game code changed since the last run,
+re-rsync (step 2) before running the bench.
+
+---
+
+## Bench modes
+
+| command | query set | what it runs |
+|---|---|---|
+| `./scripts/run-bench.sh` | `queries-tpuf.txt` (31 queries) | turbopuffer comparison: TOP_10/100/1000 + COUNT |
+| `./scripts/run-bench.sh full` | `queries-full.txt` (962 queries) | full standard benchmark |
+
+---
 
 ## Refreshing turbopuffer's numbers
 
-If turbopuffer publishes a newer snapshot, update the vendored copy and the
-`queries-tpuf.txt` it implies:
+If turbopuffer publishes a newer snapshot:
+
 ```bash
-curl -s https://turbopuffer.github.io/search-benchmark-game/<NEW>/results.json \
-  -o data/turbopuffer-<NEW>.json
-# regenerate queries-tpuf.txt from it, and point TPUF_RESULTS at the new file
+NEW=2026-XX-XXT...
+curl -s "https://turbopuffer.github.io/search-benchmark-game/$NEW/results.json" \
+  -o data/turbopuffer-$NEW.json
+
+# update queries-tpuf.txt from the new snapshot
+python3 -c "
+import json, sys
+d = json.load(open('data/turbopuffer-$NEW.json'))
+entries = d['results']['TOP_10']['turbopuffer']
+for e in entries:
+    print(json.dumps({'query': e['query'], 'tags': e['tags']}))
+" > queries-tpuf.txt
+
+# point the Makefile at the new file
+sed -i '' "s|TPUF_RESULTS ?=.*|TPUF_RESULTS ?= data/turbopuffer-$NEW.json|" Makefile
+
+git add data/turbopuffer-$NEW.json queries-tpuf.txt Makefile
+git commit -m "bench: update turbopuffer snapshot to $NEW"
+git push
 ```
