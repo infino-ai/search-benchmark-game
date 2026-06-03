@@ -1,0 +1,43 @@
+name: Deploy benchmark site
+
+# Publishes the dashboard to https://infino-ai.github.io/search-benchmark-game
+# whenever an updated results.json (or the prebuilt web app) lands on master.
+# The web app is prebuilt and committed under web/build (react-scripts 3.4.3),
+# so we just drop results.json next to index.html and deploy — no Node build.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - results.json
+      - web/build/**
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stage results.json into the prebuilt site
+        # If no root results.json yet, fall back to the one already committed
+        # under web/build (so the first deploy isn't broken).
+        run: '[ -f results.json ] && cp results.json web/build/results.json || echo "no root results.json; using committed web/build/results.json"'
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/build
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -56,13 +56,10 @@ fn main() {
         let command = parts.next().unwrap_or("");
         let query = parts.next().unwrap_or("");
 
-        // UNSUPPORTED — infino has no optimized path for these, so reporting
-        // a number would misrepresent the engine rather than compare fairly:
-        //   - phrase ("a b")     : no positional postings.
-        //   - negation (-term)   : no NOT operator in the FTS API.
-        //   - COUNT / *_COUNT    : no dedicated count; would ride a full
-        //                          unpruned scoring search.
-        // Only the pruned, ranked top-k path (TOP_10/100/1000) is benchmarked.
+        // UNSUPPORTED — infino cannot produce a CORRECT result for these, so
+        // a number would be garbage rather than a fair-but-slow datapoint:
+        //   - phrase ("a b")   : no positional postings.
+        //   - negation (-term) : no NOT operator in the FTS API.
         if query.contains('"') || query.split_whitespace().any(|t| t.starts_with('-')) {
             println!("UNSUPPORTED");
             continue;
@@ -75,6 +72,14 @@ fn main() {
             "TOP_10" | "TOP_100" | "TOP_1000" => reader
                 .bm25_search(COLUMN, &cleaned, top_k(command), mode)
                 .map(|_| 1),
+            // COUNT / *_COUNT: correct but UNOPTIMIZED — infino has no dedicated
+            // count path, so we run a full unpruned search and count the hits.
+            // Included so the comparison has real latency numbers (expect infino
+            // to lose here vs engines with a count-only collector).
+            "COUNT" | "TOP_1_COUNT" | "TOP_5_COUNT" | "TOP_10_COUNT"
+            | "TOP_100_COUNT" | "TOP_1000_COUNT" => reader
+                .bm25_search(COLUMN, &cleaned, usize::MAX, mode)
+                .map(|v| v.len()),
             _ => {
                 println!("UNSUPPORTED");
                 continue;
