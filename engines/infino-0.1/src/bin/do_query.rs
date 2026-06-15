@@ -30,12 +30,10 @@ fn main() {
     let store: Arc<dyn SuperfileReaderCache> = Arc::new(InMemoryReaderCache::new());
     let opts = infino_bench::options(Arc::clone(&storage)).with_store(Arc::clone(&store));
 
-    // `Supertable::open` and segment fetch are async; search is sync. One
-    // runtime drives open + preload, then we leave it.
+    // Supertable::open is sync (bridges internally to async storage I/O).
+    // We still need a runtime for the preload loop below.
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-    let st = rt
-        .block_on(Supertable::open(opts))
-        .expect("open supertable");
+    let st = Supertable::open(opts).expect("open supertable");
     let reader = st.reader();
 
     // Preload all segments into the in-memory tier.
@@ -43,7 +41,7 @@ fn main() {
     eprintln!("preloading {} segments into memory", uris.len());
     rt.block_on(async {
         for uri in uris {
-            let path = format!("data/seg-{}.sf", uri.0);
+            let path = uri.storage_path();
             let (bytes, _meta) = storage.get(&path).await.expect("fetch segment bytes");
             store.insert(uri, bytes).expect("insert segment into store");
         }
@@ -70,7 +68,7 @@ fn main() {
         let result = match command {
             _ if cleaned.is_empty() => Ok(0usize),
             "TOP_10" | "TOP_100" | "TOP_1000" => reader
-                .bm25_search(COLUMN, &cleaned, top_k(command), mode)
+                .bm25_search(COLUMN, &cleaned, top_k(command), mode, None)
                 .map(|_| 1),
             // COUNT / *_COUNT: correct but UNOPTIMIZED — infino has no dedicated
             // count path, so we run a full unpruned search and count the hits.
@@ -78,7 +76,7 @@ fn main() {
             // to lose here vs engines with a count-only collector).
             "COUNT" | "TOP_1_COUNT" | "TOP_5_COUNT" | "TOP_10_COUNT"
             | "TOP_100_COUNT" | "TOP_1000_COUNT" => reader
-                .bm25_search(COLUMN, &cleaned, usize::MAX, mode)
+                .bm25_search(COLUMN, &cleaned, usize::MAX, mode, None)
                 .map(|v| v.len()),
             _ => {
                 println!("UNSUPPORTED");

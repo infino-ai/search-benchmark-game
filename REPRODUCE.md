@@ -51,7 +51,7 @@ ssh -i $KEY $BOX
 tmux new -s bench      # run inside tmux so a disconnect doesn't kill the bench
 
 cd ~/search-benchmark-game
-scripts/setup-aws.sh   # installs Rust 1.89, Temurin 21.0.8+9, build deps
+scripts/setup-aws.sh   # installs Rust 1.95, Temurin 21.0.8+9, build deps
 
 source "$HOME/.cargo/env"
 export JAVA_HOME="$HOME/jdk-21.0.8+9"

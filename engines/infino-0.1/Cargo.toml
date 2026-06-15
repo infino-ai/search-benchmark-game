@@ -20,7 +20,7 @@ path = "src/bin/do_query.rs"
 # supertable query path (manifest + per-segment fan-out) — the production
 # surface — built as a SINGLE segment so it is a like-for-like comparison
 # with the force-merged single-segment indexes tantivy and lucene build.
-infino = { path = "../../../infino" }
+infino = { path = "../../../infino", features = ["test-helpers"] }
 arrow-array = "58"
 arrow-schema = "58"
 rayon = "1"

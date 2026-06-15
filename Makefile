@@ -54,7 +54,7 @@ bench-full:
 
 compile:
 	@echo "--- Compiling binaries ---"
-	@for engine in $(ENGINES); do cd ${shell pwd}/engines/$$engine && make compile ; done
+	@for engine in $(ENGINES); do cd ${shell pwd}/engines/$$engine && make compile || exit 1; done
 
 serve:
 	@echo "--- Serving results ---"
