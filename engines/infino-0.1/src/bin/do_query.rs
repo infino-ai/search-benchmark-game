@@ -54,21 +54,23 @@ fn main() {
         let command = parts.next().unwrap_or("");
         let query = parts.next().unwrap_or("");
 
-        // UNSUPPORTED — infino cannot produce a CORRECT result for these, so
-        // a number would be garbage rather than a fair-but-slow datapoint:
-        //   - phrase ("a b")   : no positional postings.
-        //   - negation (-term) : no NOT operator in the FTS API.
-        if query.contains('"') || query.split_whitespace().any(|t| t.starts_with('-')) {
+        // UNSUPPORTED: phrase queries ("a b") — no positional postings.
+        // Negation (-term) is now supported natively by infino.
+        if query.contains('"') {
             println!("UNSUPPORTED");
             continue;
         }
 
-        let (cleaned, mode) = parse_query(query);
+        let mode = query_mode(query);
 
         let result = match command {
-            _ if cleaned.is_empty() => Ok(0usize),
+            _ if query.split_whitespace().all(|t| t.starts_with('-') || t.trim().is_empty()) => {
+                // negation-only: no positive terms to rank
+                Ok(0usize)
+            }
+            _ if query.trim().is_empty() => Ok(0usize),
             "TOP_10" | "TOP_100" | "TOP_1000" => reader
-                .bm25_search(COLUMN, &cleaned, top_k(command), mode, None)
+                .bm25_search(COLUMN, query, top_k(command), mode, None)
                 .map(|_| 1),
             // COUNT / *_COUNT: correct but UNOPTIMIZED — infino has no dedicated
             // count path, so we run a full unpruned search and count the hits.
@@ -76,7 +78,7 @@ fn main() {
             // to lose here vs engines with a count-only collector).
             "COUNT" | "TOP_1_COUNT" | "TOP_5_COUNT" | "TOP_10_COUNT"
             | "TOP_100_COUNT" | "TOP_1000_COUNT" => reader
-                .bm25_search(COLUMN, &cleaned, usize::MAX, mode, None)
+                .bm25_search(COLUMN, query, usize::MAX, mode, None)
                 .map(|v| v.len()),
             _ => {
                 println!("UNSUPPORTED");
@@ -102,22 +104,17 @@ fn top_k(command: &str) -> usize {
     }
 }
 
-/// Split into `(cleaned_query_string, mode)`. `+a +b` (all required) -> AND;
-/// `a b` -> OR. The `+`/`-` prefixes are stripped; the supertable tokenizes
-/// the returned string itself (ascii_lower), so query and corpus tokenization
-/// match exactly.
-fn parse_query(query: &str) -> (String, BoolMode) {
-    let raw: Vec<&str> = query.split_whitespace().collect();
-    let all_required = !raw.is_empty() && raw.iter().all(|t| t.starts_with('+'));
-    let mode = if all_required {
+/// Determine BoolMode from the query. `+a +b` (all positive terms required) → AND;
+/// anything else → OR. `-term` tokens are negations and excluded from the mode check.
+/// The raw query string is passed to infino as-is; its tokenizer handles `+`/`-` stripping.
+fn query_mode(query: &str) -> BoolMode {
+    let positives: Vec<&str> = query
+        .split_whitespace()
+        .filter(|t| !t.starts_with('-'))
+        .collect();
+    if !positives.is_empty() && positives.iter().all(|t| t.starts_with('+')) {
         BoolMode::And
     } else {
         BoolMode::Or
-    };
-    let cleaned = raw
-        .iter()
-        .map(|t| t.trim_start_matches(['+', '-']))
-        .collect::<Vec<_>>()
-        .join(" ");
-    (cleaned, mode)
+    }
 }
