@@ -6,18 +6,14 @@ BM25 full-text index baked in. This engine benchmarks infino's **supertable**
 query path (manifest + per-segment fan-out) — the production query surface —
 built as multiple segments and read fully in memory.
 
-## Scope: only infino's optimized paths are benchmarked
-
-This engine deliberately answers a command/query only when infino has a
-real, optimized implementation for it. Anything else returns `UNSUPPORTED`,
-so the reported numbers reflect infino's engine rather than a workaround.
+## Scope: benchmarked commands
 
 | Command / query | Status | Reason |
 |---|---|---|
 | `TOP_10` / `TOP_100` / `TOP_1000` | ✅ benchmarked | ranked top-k with BlockMaxWAND / Block-Max-MaxScore pruning |
 | union (`a b`) | ✅ | `BoolMode::Or` |
 | intersection (`+a +b`) | ✅ | `BoolMode::And` |
-| `COUNT`, `TOP_*_COUNT` | ❌ UNSUPPORTED | no dedicated count path; would ride a full unpruned scoring search — not representative |
+| `COUNT`, `TOP_*_COUNT` | ⚠️ benchmarked (unoptimized) | no dedicated count path — runs full unpruned search and counts hits |
 | negation (`-term`) | ❌ UNSUPPORTED | no NOT operator in the FTS API |
 | phrase (`"a b"`) | ❌ UNSUPPORTED | no positional postings |
 | `TOP_*_FF` | ❌ UNSUPPORTED | results are score-ordered only |

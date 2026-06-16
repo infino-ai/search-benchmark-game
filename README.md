@@ -53,14 +53,49 @@ Out of 10 runs, we only retain the best score, so Garbage Collection likely does
 
 ### Benchmark environment
 
-The results file that is included in this repository was generated using the following benchmark
-environment:
- - AWS c7i.2xlarge instance running on us-east-1
- - Processor Intel(R) Xeon(R) Platinum 8488C
- - Amazon Linux 2023
- - Kernel `6.1.148-173.267.amzn2023.x86_64`
- - Rust 1.89
- - Adoptium JDK `Temurin-21.0.8+9`
+The local results (infino, tantivy, lucene) were generated on:
+
+| | |
+|---|---|
+| Instance | AWS **c7i.2xlarge** (8 vCPU, 16 GiB RAM), us-east-1 |
+| CPU | Intel Xeon Platinum 8488C |
+| OS | Amazon Linux 2023, kernel `6.1.148-173.267.amzn2023.x86_64` |
+| Rust | 1.95.0 |
+| JDK | Adoptium Temurin 21.0.8+9 |
+
+The c7i.2xlarge was chosen specifically to match the instance type used by turbopuffer in their published benchmark.
+
+### How turbopuffer numbers are sourced
+
+We do not re-run turbopuffer ourselves — instead we take the numbers directly
+from turbopuffer's own published benchmark snapshot
+(`data/turbopuffer-2026-05-20.json`, sourced from
+`turbopuffer.github.io/search-benchmark-game`).
+
+After running infino, tantivy, and lucene locally, `scripts/merge_turbopuffer.py`
+splices turbopuffer's per-query durations into our `results.json` for the
+commands that appear in both files. Only the 31 queries in `queries-tpuf.txt`
+(derived verbatim from the turbopuffer snapshot) are used for this comparison —
+query alignment is verified by exact string match, so any drift is surfaced as
+a warning.
+
+### Apples-to-apples considerations
+
+The comparison is **methodologically equivalent**:
+
+| | infino / tantivy / lucene | turbopuffer |
+|---|---|---|
+| Hardware | AWS c7i.2xlarge, us-east-1 | AWS c7i.2xlarge (per their published benchmark) |
+| Benchmark harness | subprocess stdin/stdout | local HTTP server on the same box |
+| Latency measured | wall time including IPC overhead | wall time including localhost HTTP overhead |
+| Query set | turbopuffer's exact 31 queries | same 31 queries |
+| Commands compared | TOP_10, TOP_100, TOP_1000, COUNT | same |
+
+Turbopuffer's benchmark engine starts a **local** turbopuffer server process
+on the EC2 box and queries it via `http://localhost:3001` — no external network
+call. All four engines (infino, tantivy, lucene, turbopuffer) run on the same
+c7i.2xlarge hardware; the communication overhead difference (stdin/stdout vs
+localhost HTTP) is negligible, so the comparison is apples-to-apples.
 
 ## Engine specific detail
 
@@ -74,6 +109,26 @@ environment:
 
 - Tantivy returns slightly more results because its tokenizer handles apostrophes differently.
 - Tantivy and Lucene both use BM25 and should return almost identical scores.
+
+### infino-0.1
+
+infino is benchmarked on its **optimized paths only**. Commands without a
+first-class implementation return `UNSUPPORTED` rather than falling back to
+a slower workaround — so every reported number reflects infino's actual engine.
+
+| Command | Status |
+|---|---|
+| `TOP_10`, `TOP_100`, `TOP_1000` (union / intersection) | ✅ benchmarked |
+| `COUNT`, `TOP_*_COUNT` | ⚠️ benchmarked — unoptimized (full search + count; no dedicated count path) |
+| Phrase queries | ❌ UNSUPPORTED — no positional postings |
+| Negation (`-term`) | ❌ UNSUPPORTED — no NOT operator |
+| `TOP_*_FILTER_%` | ❌ UNSUPPORTED — results are score-ordered only |
+
+Tokenization: `AsciiLowerTokenizer` (split on non-alphanumeric, ASCII-lowercase, no stemming) — equivalent to Lucene's `StandardTokenizer` on this corpus. BM25 with Lucene defaults (`k1 = 1.2`, `b = 0.75`).
+
+The index is built as multiple on-disk segments and then fully loaded into
+memory before benchmarking begins, so the query path is synchronous with no
+per-query I/O or async overhead.
 
 
 # Reproducing
