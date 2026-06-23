@@ -6,8 +6,12 @@ exec >> /var/log/sbg-bench.log 2>&1
 REGION="us-east-1"
 BUCKET="sbg-bench-corpus"
 DONE_PARAM="/sbg-bench/done"
+EC2_HOME="/home/ec2-user"
 
 signal_done() {
+  # upload log to S3 first so failures are always inspectable
+  aws s3 cp /var/log/sbg-bench.log "s3://$BUCKET/bench-log.txt" \
+    --region "$REGION" 2>/dev/null || true
   aws ssm put-parameter \
     --name "$DONE_PARAM" \
     --value "$1" \
@@ -24,7 +28,7 @@ dnf install -y git make gcc gcc-c++ cmake clang bzip2 python3 unzip wget
 # write the GitHub token to tmpfs so bench.sh can read it for git clone
 mkdir -p /run/sbg
 printf '%s' '__GH_TOKEN__' > /run/sbg/gh-token
-chmod 600 /run/sbg/gh-token
+chmod 644 /run/sbg/gh-token   # ec2-user needs to read this
 
 # write per-user bench script
 cat > /tmp/bench.sh << 'BENCH_EOF'
@@ -60,7 +64,7 @@ git clone "https://x-access-token:${GH_TOKEN}@github.com/infino-ai/search-benchm
 
 cd "$HOME/search-benchmark-game"
 
-# corpus from S3 (uploaded once manually; never re-downloads from Dropbox in CI)
+# corpus from S3
 aws s3 cp "s3://sbg-bench-corpus/corpus.json" corpus.json
 
 # build all engines, index, bench (turbopuffer comparison query set)
@@ -72,10 +76,11 @@ BENCH_EOF
 
 chmod +x /tmp/bench.sh
 
-if sudo -u ec2-user bash /tmp/bench.sh; then
+# -H sets HOME to ec2-user's home (/home/ec2-user) so rustup, cargo, git
+# all install and resolve paths under the correct home directory
+if sudo -H -u ec2-user bash /tmp/bench.sh; then
   trap - EXIT
   signal_done ok
 else
-  # trap will fire and signal error
-  exit 1
+  exit 1   # EXIT trap fires → signal_done error + log upload
 fi
