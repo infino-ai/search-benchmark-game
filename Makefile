@@ -45,12 +45,14 @@ bench:
 	@python3 scripts/merge_turbopuffer.py results.json $(TPUF_RESULTS) results.json
 
 # Full standard benchmark = the 962-query set with the full command list.
+# Outputs results-full.json so it doesn't collide with the tpuf results.json.
 bench-full: QUERIES := queries-full.txt
 bench-full: COMMANDS := TOP_10 TOP_100 TOP_1000 TOP_100_COUNT COUNT
 bench-full:
 	@echo "--- Benchmarking (full 962-query standard: $(ENGINES)) ---"
 	@rm -fr results && mkdir results
 	@python3 src/client.py $(QUERIES) $(ENGINES)
+	@mv results.json results-full.json
 
 compile:
 	@echo "--- Compiling binaries ---"

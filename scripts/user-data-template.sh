@@ -67,11 +67,15 @@ cd "$HOME/search-benchmark-game"
 # corpus from S3
 aws s3 cp "s3://sbg-bench-corpus/corpus.json" corpus.json
 
-# build all engines, index, bench (turbopuffer comparison query set)
-scripts/run-bench.sh
+# compile + index once, then run both bench modes without re-indexing
+make compile
+make index
+make bench        # turbopuffer comparison → results.json
+make bench-full   # full 962-query standard → results-full.json
 
-# upload results for the workflow to fetch
-aws s3 cp results.json "s3://sbg-bench-corpus/results.json"
+# upload both results for the workflow to fetch
+aws s3 cp results.json      "s3://sbg-bench-corpus/results.json"
+aws s3 cp results-full.json "s3://sbg-bench-corpus/results-full.json"
 BENCH_EOF
 
 chmod +x /tmp/bench.sh

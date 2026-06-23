@@ -107,7 +107,9 @@ jobs:
           done
 
       - name: Download results from S3
-        run: aws s3 cp "s3://$CORPUS_BUCKET/results.json" results.json
+        run: |
+          aws s3 cp "s3://$CORPUS_BUCKET/results.json"      results.json
+          aws s3 cp "s3://$CORPUS_BUCKET/results-full.json" results-full.json
 
       # The initial app-token may have expired (bench takes ~2 h, token lasts 1 h).
       # Generate a fresh one just for the push.
@@ -124,8 +126,8 @@ jobs:
         run: |
           git config user.name  "sbg-ci"
           git config user.email "sbg-ci@infino.ai"
-          git add results.json
-          git diff --cached --quiet && echo "results.json unchanged — nothing to push" && exit 0
+          git add results.json results-full.json
+          git diff --cached --quiet && echo "results unchanged — nothing to push" && exit 0
           git commit -m "bench: $(date -u +%F) nightly results"
           # Remove the credential helper installed by actions/checkout so our
           # App token in the push URL is used instead of the default GITHUB_TOKEN.

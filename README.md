@@ -4,7 +4,10 @@
 This repository is standardized benchmark for comparing the speed of various
 aspects of search engine technologies.
 
-The results are available [here](https://tantivy-search.github.io/bench/).
+The results are available at:
+
+- **[infino vs tantivy vs lucene vs turbopuffer](https://infino-ai.github.io/search-benchmark-game/)** — turbopuffer comparison query set (31 queries), updated nightly
+- **[full benchmark](https://infino-ai.github.io/search-benchmark-game/full)** — 962-query standard set (infino, tantivy, lucene), updated nightly
 
 This benchmark is both
 - **for users** to make it easy for users to compare different libraries

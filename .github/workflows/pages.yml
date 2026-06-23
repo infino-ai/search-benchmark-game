@@ -10,6 +10,7 @@ on:
     branches: [master]
     paths:
       - results.json
+      - results-full.json
       - web/build/**
       - .github/workflows/pages.yml
   workflow_dispatch:
@@ -31,10 +32,12 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - name: Stage results.json into the prebuilt site
-        # If no root results.json yet, fall back to the one already committed
-        # under web/build (so the first deploy isn't broken).
-        run: '[ -f results.json ] && cp results.json web/build/results.json || echo "no root results.json; using committed web/build/results.json"'
+      - name: Stage results into the prebuilt site
+        run: |
+          # tpuf comparison → root dashboard
+          [ -f results.json ]      && cp results.json      web/build/results.json      || echo "no results.json; using committed fallback"
+          # full 962-query benchmark → /full dashboard
+          [ -f results-full.json ] && cp results-full.json web/build/full/results.json || echo "no results-full.json; /full will be empty until first nightly run"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
