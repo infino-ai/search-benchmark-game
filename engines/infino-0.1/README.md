@@ -29,6 +29,9 @@ Lucene defaults (`k1 = 1.2`, `b = 0.75`) and Lucene-style IDF.
 
 `build_index` streams JSON from stdin into a supertable with a multi-thread
 writer pool and a 4 GiB auto-flush threshold, producing several segments with
-bounded build memory (tuned for c7i.2xlarge / 16 GiB). `do_query` opens the
-persisted supertable and preloads every segment into an in-memory reader tier,
-so the query path is fully synchronous — no per-query async/tokio overhead.
+bounded build memory (tuned for c7i.2xlarge / 16 GiB). After ingest, it calls
+`optimize()` to compact all segments into one — matching the single-segment
+shape that tantivy and Lucene produce, so query-path fan-out overhead is
+equivalent. `do_query` opens the persisted supertable and preloads every
+segment into an in-memory reader tier, so the query path is fully synchronous
+— no per-query async/tokio overhead.

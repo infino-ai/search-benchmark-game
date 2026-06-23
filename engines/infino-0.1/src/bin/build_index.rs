@@ -1,23 +1,24 @@
-//! Build a single-segment infino supertable from newline-delimited JSON.
+//! Build an infino supertable from newline-delimited JSON, then compact it.
 //!
 //! Each input line is `{"id": "...", "text": "...", "sort_field": <u64>}`.
-//! Only `text` is indexed. Docs are buffered (auto-flush disabled) and a
-//! single `commit()` at the end — on a 1-thread writer pool — produces
-//! exactly one superfile segment, persisted to `<idx>/` via the local-FS
-//! storage provider so `do_query` can reopen it in a separate process.
-//!
-//! NOTE: a single segment means the entire corpus is held in memory until
-//! the final commit (the supertable write buffer does not spill). At full
-//! Wikipedia scale this needs a large-RAM host.
+//! Only `text` is indexed. Docs are streamed in 50 k-doc batches; a 4 GiB
+//! auto-flush threshold causes the writer to commit several segments
+//! incrementally (bounded build memory). After ingest, `optimize()` compacts
+//! all segments into one, matching the single-segment shape that tantivy and
+//! Lucene produce — so query-path fan-out overhead is equivalent.
 
 use std::env;
 use std::io::{self, BufRead};
 use std::sync::Arc;
 
 use arrow_array::{LargeStringArray, RecordBatch};
+use infino::{CompactionSettings, OptimizeOptions};
 use infino::storage::{LocalFsStorageProvider, StorageProvider};
 use infino::supertable::Supertable;
 use serde::Deserialize;
+
+/// Large enough that the entire Wikipedia BM25 index fits in one output segment.
+const COMPACT_TARGET_MB: u64 = 32 * 1024;
 
 const BATCH: usize = 50_000;
 
@@ -60,6 +61,14 @@ fn main() {
     writer.commit().expect("commit");
     drop(writer);
     eprintln!("indexed {total} docs into the supertable");
+
+    eprintln!("compacting…");
+    st.optimize(&OptimizeOptions::compact(CompactionSettings {
+        target_superfile_size_mb: COMPACT_TARGET_MB,
+        ..Default::default()
+    }))
+    .expect("optimize");
+    eprintln!("compact done");
 }
 
 fn append(writer: &mut infino::supertable::SupertableWriter, schema: &Arc<arrow_schema::Schema>, buf: &mut Vec<String>) {
