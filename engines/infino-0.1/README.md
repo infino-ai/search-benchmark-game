@@ -13,7 +13,7 @@ built as multiple segments and read fully in memory.
 | `TOP_10` / `TOP_100` / `TOP_1000` | ✅ benchmarked | ranked top-k with BlockMaxWAND / Block-Max-MaxScore pruning |
 | union (`a b`) | ✅ | `BoolMode::Or` |
 | intersection (`+a +b`) | ✅ | `BoolMode::And` |
-| `COUNT`, `TOP_*_COUNT` | ⚠️ benchmarked (unoptimized) | no dedicated count path — runs full unpruned search and counts hits |
+| `COUNT`, `TOP_*_COUNT` | ✅ benchmarked | native count path — posting-list traversal, no scoring |
 | negation (`-term`) | ❌ UNSUPPORTED | no NOT operator in the FTS API |
 | phrase (`"a b"`) | ❌ UNSUPPORTED | no positional postings |
 | `TOP_*_FF` | ❌ UNSUPPORTED | results are score-ordered only |

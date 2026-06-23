@@ -4,8 +4,9 @@
 //! line per query (stdout is a LineWriter, so each newline flushes).
 //!
 //! Supported: COUNT, TOP_10/100/1000, TOP_{1,5,10,100,1000}_COUNT.
-//! Phrase queries, `*_FF` (fast-field ordering) and UNOPTIMIZED_COUNT are
-//! answered "UNSUPPORTED" — see README.md.
+//! COUNT and TOP_*_COUNT use the native count() path (posting-list traversal,
+//! no scoring). Phrase queries, `*_FF` (fast-field ordering) and
+//! UNOPTIMIZED_COUNT are answered "UNSUPPORTED" — see README.md.
 
 use std::env;
 use std::io::{self, BufRead};
@@ -72,14 +73,17 @@ fn main() {
             "TOP_10" | "TOP_100" | "TOP_1000" => reader
                 .bm25_search(COLUMN, query, top_k(command), mode, None)
                 .map(|_| 1),
-            // COUNT / *_COUNT: correct but UNOPTIMIZED — infino has no dedicated
-            // count path, so we run a full unpruned search and count the hits.
-            // Included so the comparison has real latency numbers (expect infino
-            // to lose here vs engines with a count-only collector).
-            "COUNT" | "TOP_1_COUNT" | "TOP_5_COUNT" | "TOP_10_COUNT"
+            // Plain COUNT: native posting-list traversal, no scoring.
+            "COUNT" => reader
+                .count(COLUMN, query, mode)
+                .map(|n| n as usize),
+            // TOP_k_COUNT: fetch the top-k results AND count all matches —
+            // two passes, matching what engines like Lucene do for this command.
+            "TOP_1_COUNT" | "TOP_5_COUNT" | "TOP_10_COUNT"
             | "TOP_100_COUNT" | "TOP_1000_COUNT" => reader
-                .bm25_search(COLUMN, query, usize::MAX, mode, None)
-                .map(|v| v.len()),
+                .bm25_search(COLUMN, query, top_k_count(command), mode, None)
+                .and_then(|_| reader.count(COLUMN, query, mode))
+                .map(|n| n as usize),
             _ => {
                 println!("UNSUPPORTED");
                 continue;
@@ -100,6 +104,17 @@ fn top_k(command: &str) -> usize {
         "TOP_10" => 10,
         "TOP_100" => 100,
         "TOP_1000" => 1000,
+        _ => 10,
+    }
+}
+
+fn top_k_count(command: &str) -> usize {
+    match command {
+        "TOP_1_COUNT" => 1,
+        "TOP_5_COUNT" => 5,
+        "TOP_10_COUNT" => 10,
+        "TOP_100_COUNT" => 100,
+        "TOP_1000_COUNT" => 1000,
         _ => 10,
     }
 }

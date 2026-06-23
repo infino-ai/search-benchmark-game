@@ -6,5 +6,5 @@
   "BM25 with Lucene defaults (k1=1.2, b=0.75) and Lucene-style IDF.",
   "Per-doc length normalization precomputed at build time.",
   "Top-k uses BlockMaxWAND (single-term, AND) and WAND/BlockMaxWAND vs MaxScore/Block-Max-MaxScore (OR). SIMD-accelerated scoring (4 terms at a time).",
-  "Only optimized paths are benchmarked: ranked TOP_10/100/1000. COUNT/*_COUNT (no dedicated count path), negation (no NOT operator), phrase (no positional postings), and *_FF are reported UNSUPPORTED."
+  "Benchmarked: ranked TOP_10/100/1000 and COUNT/*_COUNT (native posting-list count, no scoring). Unsupported: negation (no NOT operator), phrase (no positional postings), *_FF (score-ordered only)."
 ]
