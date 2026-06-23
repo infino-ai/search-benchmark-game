@@ -1,0 +1,144 @@
+name: Nightly benchmark
+
+# Runs the full turbopuffer-comparison bench on a c7i.2xlarge, commits
+# results.json to master, and lets the existing pages.yml publish the dashboard.
+
+on:
+  schedule:
+    - cron: '0 3 * * *'   # 03:00 UTC daily
+  workflow_dispatch:       # manual trigger
+
+permissions:
+  id-token: write   # required for AWS OIDC
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-1
+      CORPUS_BUCKET: sbg-bench-corpus
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Short-lived token covering both repos (clone infino + push results)
+      - name: Generate GitHub App token
+        uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: infino-ai
+          repositories: "search-benchmark-game,infino"
+
+      - name: Configure AWS credentials (OIDC — no stored keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::381491836522:role/sbg-ci
+          aws-region: us-east-1
+
+      # Clean up any leftover done-signal from a previous failed run
+      - name: Clear stale done-signal
+        run: |
+          aws ssm delete-parameter --name /sbg-bench/done --region us-east-1 2>/dev/null || true
+
+      - name: Resolve latest AL2023 AMI and default security group
+        id: infra
+        run: |
+          AMI=$(aws ec2 describe-images \
+            --owners amazon \
+            --filters "Name=name,Values=al2023-ami-*-x86_64" \
+                      "Name=state,Values=available" \
+            --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
+            --output text)
+          echo "ami=$AMI" >> "$GITHUB_OUTPUT"
+
+          VPC=$(aws ec2 describe-vpcs \
+            --filters "Name=isDefault,Values=true" \
+            --query 'Vpcs[0].VpcId' --output text)
+          SG=$(aws ec2 describe-security-groups \
+            --filters "Name=vpc-id,Values=$VPC" \
+                      "Name=group-name,Values=default" \
+            --query 'SecurityGroups[0].GroupId' --output text)
+          echo "sg=$SG" >> "$GITHUB_OUTPUT"
+
+      # Substitute the GitHub token into the user-data template so the EC2
+      # instance can clone the private infino repo during bench setup.
+      - name: Build user-data
+        id: userdata
+        run: |
+          sed "s|__GH_TOKEN__|${{ steps.app-token.outputs.token }}|g" \
+            scripts/user-data-template.sh > /tmp/user-data.sh
+          echo "b64=$(base64 -w0 /tmp/user-data.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Launch c7i.2xlarge bench instance
+        id: ec2
+        run: |
+          INSTANCE_ID=$(aws ec2 run-instances \
+            --image-id "${{ steps.infra.outputs.ami }}" \
+            --instance-type c7i.2xlarge \
+            --iam-instance-profile Name=sbg-bench-instance \
+            --security-group-ids "${{ steps.infra.outputs.sg }}" \
+            --user-data "${{ steps.userdata.outputs.b64 }}" \
+            --block-device-mappings \
+              '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":120,"VolumeType":"gp3"}}]' \
+            --tag-specifications \
+              'ResourceType=instance,Tags=[{Key=Name,Value=sbg-bench-nightly}]' \
+            --query 'Instances[0].InstanceId' \
+            --output text)
+          echo "id=$INSTANCE_ID" >> "$GITHUB_OUTPUT"
+          echo "Launched instance: $INSTANCE_ID"
+
+      # Poll every 60 s; bench typically finishes in ~2 h
+      - name: Wait for benchmark to complete (3 h timeout)
+        timeout-minutes: 180
+        run: |
+          echo "Polling /sbg-bench/done every 60s …"
+          while true; do
+            STATUS=$(aws ssm get-parameter \
+              --name /sbg-bench/done \
+              --query 'Parameter.Value' \
+              --output text 2>/dev/null || echo "pending")
+            echo "$(date -u +%H:%M:%S)  status=$STATUS"
+            [ "$STATUS" = "ok" ]    && break
+            [ "$STATUS" = "error" ] && { echo "Bench reported error on EC2."; exit 1; }
+            sleep 60
+          done
+
+      - name: Download results from S3
+        run: aws s3 cp "s3://$CORPUS_BUCKET/results.json" results.json
+
+      # The initial app-token may have expired (bench takes ~2 h, token lasts 1 h).
+      # Generate a fresh one just for the push.
+      - name: Generate fresh token for push
+        uses: actions/create-github-app-token@v1
+        id: push-token
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: infino-ai
+          repositories: "search-benchmark-game"
+
+      - name: Commit and push results
+        run: |
+          git config user.name  "sbg-ci"
+          git config user.email "sbg-ci@infino.ai"
+          git add results.json
+          git diff --cached --quiet && echo "results.json unchanged — nothing to push" && exit 0
+          git commit -m "bench: $(date -u +%F) nightly results"
+          git push \
+            "https://x-access-token:${{ steps.push-token.outputs.token }}@github.com/infino-ai/search-benchmark-game.git" \
+            HEAD:master
+
+      # Always clean up — even if the bench or push step failed
+      - name: Delete SSM done-signal
+        if: always()
+        run: |
+          aws ssm delete-parameter --name /sbg-bench/done --region us-east-1 2>/dev/null || true
+
+      - name: Terminate EC2 instance
+        if: always()
+        run: |
+          aws ec2 terminate-instances --instance-ids "${{ steps.ec2.outputs.id }}"
+          echo "Terminated ${{ steps.ec2.outputs.id }}"
