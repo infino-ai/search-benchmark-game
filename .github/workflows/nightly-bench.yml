@@ -127,6 +127,9 @@ jobs:
           git add results.json
           git diff --cached --quiet && echo "results.json unchanged — nothing to push" && exit 0
           git commit -m "bench: $(date -u +%F) nightly results"
+          # Remove the credential helper installed by actions/checkout so our
+          # App token in the push URL is used instead of the default GITHUB_TOKEN.
+          git config --unset-all http.https://github.com/.extraheader || true
           git push \
             "https://x-access-token:${{ steps.push-token.outputs.token }}@github.com/infino-ai/search-benchmark-game.git" \
             HEAD:master
