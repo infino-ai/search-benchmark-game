@@ -67,11 +67,14 @@ cd "$HOME/search-benchmark-game"
 # corpus from S3
 aws s3 cp "s3://sbg-bench-corpus/corpus.json" corpus.json
 
-# compile + index once, then run both bench modes without re-indexing
+# compile + index once, then run both bench modes without re-indexing.
+# bench-full runs first: it writes results.json then renames it to results-full.json.
+# bench runs second: writes a fresh results.json (turbopuffer comparison).
+# Both files exist for the S3 upload.
 make compile
 make index
-make bench        # turbopuffer comparison → results.json
 make bench-full   # full 962-query standard → results-full.json
+make bench        # turbopuffer comparison → results.json
 
 # upload both results for the workflow to fetch
 aws s3 cp results.json      "s3://sbg-bench-corpus/results.json"
