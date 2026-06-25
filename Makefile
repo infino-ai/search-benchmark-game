@@ -12,7 +12,8 @@ WARMUP_TIME ?= 60
 NUM_ITER ?= 10
 
 # turbopuffer's published snapshot we merge against (their `turbopuffer` column).
-TPUF_RESULTS ?= data/turbopuffer-2026-05-20.json
+# fetch-tpuf refreshes this before bench runs; the static file is the fallback.
+TPUF_RESULTS ?= data/turbopuffer-latest.json
 
 help:
 	@grep '^[^#[:space:]].*:' Makefile
@@ -32,12 +33,15 @@ index:
 	@echo "--- Indexing corpus ---"
 	@for engine in $(ENGINES); do cd ${shell pwd}/engines/$$engine && make index ; done
 
+fetch-tpuf:
+	@python3 scripts/fetch_tpuf_latest.py
+
 # Default benchmark = turbopuffer comparison: run infino/tantivy/lucene on
 # turbopuffer's exact query set + the commands all three support, then merge
 # turbopuffer's published column into results.json.
 bench: QUERIES := queries-tpuf.txt
 bench: COMMANDS := TOP_10 TOP_100 TOP_1000 COUNT
-bench:
+bench: fetch-tpuf
 	@echo "--- Benchmarking (turbopuffer comparison: $(ENGINES)) ---"
 	@rm -fr results && mkdir results
 	@python3 src/client.py $(QUERIES) $(ENGINES)
