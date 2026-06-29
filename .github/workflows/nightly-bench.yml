@@ -17,6 +17,10 @@ on:
         description: 'infino branch to bench (default: main)'
         default: 'main'
         required: false
+      infino_repo:
+        description: 'infino repo to bench, e.g. a public fork (default: infino-ai/infino)'
+        default: 'infino-ai/infino'
+        required: false
 
 permissions:
   id-token: write   # required for AWS OIDC
@@ -29,6 +33,7 @@ jobs:
       AWS_REGION: us-east-1
       CORPUS_BUCKET: sbg-bench-corpus
       INFINO_BRANCH: ${{ inputs.infino_branch || 'main' }}
+      INFINO_REPO: ${{ inputs.infino_repo || 'infino-ai/infino' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -74,13 +79,14 @@ jobs:
             --query 'SecurityGroups[0].GroupId' --output text)
           echo "sg=$SG" >> "$GITHUB_OUTPUT"
 
-      # Substitute the GitHub token and infino branch into the user-data template.
+      # Substitute the GitHub token, infino repo, and infino branch into the user-data template.
       - name: Build user-data
         id: userdata
         run: |
           sed \
             -e "s|__GH_TOKEN__|${{ steps.app-token.outputs.token }}|g" \
             -e "s|__INFINO_BRANCH__|${INFINO_BRANCH}|g" \
+            -e "s|__INFINO_REPO__|${INFINO_REPO}|g" \
             scripts/user-data-template.sh > /tmp/user-data.sh
           echo "b64=$(base64 -w0 /tmp/user-data.sh)" >> "$GITHUB_OUTPUT"
 
@@ -120,37 +126,38 @@ jobs:
 
       - name: Download results from S3
         run: |
-          if [ "$INFINO_BRANCH" = "main" ]; then
+          if [ "$INFINO_BRANCH" = "main" ] && [ "$INFINO_REPO" = "infino-ai/infino" ]; then
             aws s3 cp "s3://$CORPUS_BUCKET/results.json"      results.json
             aws s3 cp "s3://$CORPUS_BUCKET/results-full.json" results-full.json
           else
-            BRANCH_SLUG="${INFINO_BRANCH//\//-}"
-            aws s3 cp "s3://$CORPUS_BUCKET/results-branch-${BRANCH_SLUG}.json"      "results-branch-${BRANCH_SLUG}.json"
-            aws s3 cp "s3://$CORPUS_BUCKET/results-full-branch-${BRANCH_SLUG}.json" "results-full-branch-${BRANCH_SLUG}.json"
+            RUN_SLUG="${INFINO_REPO//\//-}-${INFINO_BRANCH//\//-}"
+            aws s3 cp "s3://$CORPUS_BUCKET/results-branch-${RUN_SLUG}.json"      "results-branch-${RUN_SLUG}.json"
+            aws s3 cp "s3://$CORPUS_BUCKET/results-full-branch-${RUN_SLUG}.json" "results-full-branch-${RUN_SLUG}.json"
           fi
 
       # Branch runs: compare infino-0.1 column vs committed main baseline and
       # post a markdown table to the job summary. No commit to master.
       - name: Compare branch results vs main
-        if: env.INFINO_BRANCH != 'main'
+        if: env.INFINO_BRANCH != 'main' || env.INFINO_REPO != 'infino-ai/infino'
         run: |
-          BRANCH_SLUG="${INFINO_BRANCH//\//-}"
+          RUN_SLUG="${INFINO_REPO//\//-}-${INFINO_BRANCH//\//-}"
+          RUN_LABEL="${INFINO_REPO}@${INFINO_BRANCH}"
           python3 scripts/compare_results.py \
             results.json \
-            "results-branch-${BRANCH_SLUG}.json" \
-            --label "$INFINO_BRANCH" \
+            "results-branch-${RUN_SLUG}.json" \
+            --label "$RUN_LABEL" \
             >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           python3 scripts/compare_results.py \
             results-full.json \
-            "results-full-branch-${BRANCH_SLUG}.json" \
-            --label "$INFINO_BRANCH (full 962-query)" \
+            "results-full-branch-${RUN_SLUG}.json" \
+            --label "$RUN_LABEL (full 962-query)" \
             >> "$GITHUB_STEP_SUMMARY"
 
       # The initial app-token may have expired (bench takes ~2 h, token lasts 1 h).
       # Generate a fresh one just for the push.
       - name: Generate fresh token for push
-        if: env.INFINO_BRANCH == 'main'
+        if: env.INFINO_BRANCH == 'main' && env.INFINO_REPO == 'infino-ai/infino'
         uses: actions/create-github-app-token@v1
         id: push-token
         with:
@@ -160,7 +167,7 @@ jobs:
           repositories: "search-benchmark-game"
 
       - name: Commit and push results
-        if: env.INFINO_BRANCH == 'main'
+        if: env.INFINO_BRANCH == 'main' && env.INFINO_REPO == 'infino-ai/infino'
         run: |
           git config user.name  "sbg-ci"
           git config user.email "sbg-ci@infino.ai"

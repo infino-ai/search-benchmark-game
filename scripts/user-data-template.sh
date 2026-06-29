@@ -35,8 +35,9 @@ cat > /tmp/bench.sh << 'BENCH_EOF'
 #!/bin/bash
 set -euo pipefail
 
-# __INFINO_BRANCH__ is substituted by the GitHub Actions workflow at launch time.
+# __INFINO_BRANCH__ and __INFINO_REPO__ are substituted by the GitHub Actions workflow at launch time.
 INFINO_BRANCH="__INFINO_BRANCH__"
+INFINO_REPO="__INFINO_REPO__"
 
 # Rust toolchain always needed (infino + tantivy; rust-toolchain.toml pins version)
 if ! command -v rustup &>/dev/null; then
@@ -60,9 +61,9 @@ fi
 
 GH_TOKEN=$(cat /run/sbg/gh-token)
 
-# infino source is a path dep for engines/infino-0.1 (../../../infino)
-git clone "https://x-access-token:${GH_TOKEN}@github.com/infino-ai/infino.git" \
-  "$HOME/infino"
+# infino source is a path dep for engines/infino-0.1 (../../../infino).
+# public repo (and public forks) — no token needed.
+git clone "https://github.com/${INFINO_REPO}.git" "$HOME/infino"
 git clone "https://x-access-token:${GH_TOKEN}@github.com/infino-ai/search-benchmark-game.git" \
   "$HOME/search-benchmark-game"
 
@@ -87,14 +88,15 @@ make "${MAKE_ARGS[@]}" index
 make "${MAKE_ARGS[@]}" bench-full   # full 962-query standard → results-full.json
 make "${MAKE_ARGS[@]}" bench        # turbopuffer comparison  → results.json
 
-# branch runs upload to branch-keyed S3 paths so nightly results aren't clobbered
-BRANCH_SLUG="${INFINO_BRANCH//\//-}"
-if [ "$INFINO_BRANCH" = "main" ]; then
+# only upload to canonical keys for the official repo on main; everything else
+# uses a run-specific key so nightly results are never clobbered
+if [ "$INFINO_BRANCH" = "main" ] && [ "$INFINO_REPO" = "infino-ai/infino" ]; then
   aws s3 cp results.json      "s3://sbg-bench-corpus/results.json"
   aws s3 cp results-full.json "s3://sbg-bench-corpus/results-full.json"
 else
-  aws s3 cp results.json      "s3://sbg-bench-corpus/results-branch-${BRANCH_SLUG}.json"
-  aws s3 cp results-full.json "s3://sbg-bench-corpus/results-full-branch-${BRANCH_SLUG}.json"
+  RUN_SLUG="${INFINO_REPO//\//-}-${INFINO_BRANCH//\//-}"
+  aws s3 cp results.json      "s3://sbg-bench-corpus/results-branch-${RUN_SLUG}.json"
+  aws s3 cp results-full.json "s3://sbg-bench-corpus/results-full-branch-${RUN_SLUG}.json"
 fi
 BENCH_EOF
 
