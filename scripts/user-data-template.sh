@@ -35,8 +35,10 @@ cat > /tmp/bench.sh << 'BENCH_EOF'
 #!/bin/bash
 set -euo pipefail
 
-# Rust toolchain (infino + tantivy engines both need it; rust-toolchain.toml
-# in infino/ pins the exact version, rustup resolves it automatically)
+# __INFINO_BRANCH__ is substituted by the GitHub Actions workflow at launch time.
+INFINO_BRANCH="__INFINO_BRANCH__"
+
+# Rust toolchain always needed (infino + tantivy; rust-toolchain.toml pins version)
 if ! command -v rustup &>/dev/null; then
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 fi
@@ -44,15 +46,17 @@ source "$HOME/.cargo/env"
 # pre-install the pinned version so the first cargo build doesn't stall
 rustup toolchain install 1.95.0
 
-# JDK 21 (lucene engine)
-if [ ! -d "$HOME/jdk-21.0.8+9" ]; then
-  wget -q \
-    "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.8%2B9/OpenJDK21U-jdk_x64_linux_hotspot_21.0.8_9.tar.gz" \
-    -O /tmp/jdk.tar.gz
-  tar xzf /tmp/jdk.tar.gz -C "$HOME" && rm /tmp/jdk.tar.gz
+# JDK 21 only needed for lucene — skip on branch runs (infino-0.1 only)
+if [ "$INFINO_BRANCH" = "main" ]; then
+  if [ ! -d "$HOME/jdk-21.0.8+9" ]; then
+    wget -q \
+      "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.8%2B9/OpenJDK21U-jdk_x64_linux_hotspot_21.0.8_9.tar.gz" \
+      -O /tmp/jdk.tar.gz
+    tar xzf /tmp/jdk.tar.gz -C "$HOME" && rm /tmp/jdk.tar.gz
+  fi
+  export JAVA_HOME="$HOME/jdk-21.0.8+9"
+  export PATH="$PATH:$JAVA_HOME/bin"
 fi
-export JAVA_HOME="$HOME/jdk-21.0.8+9"
-export PATH="$PATH:$JAVA_HOME/bin"
 
 GH_TOKEN=$(cat /run/sbg/gh-token)
 
@@ -62,23 +66,36 @@ git clone "https://x-access-token:${GH_TOKEN}@github.com/infino-ai/infino.git" \
 git clone "https://x-access-token:${GH_TOKEN}@github.com/infino-ai/search-benchmark-game.git" \
   "$HOME/search-benchmark-game"
 
+# check out the requested branch before compilation
+git -C "$HOME/infino" checkout "$INFINO_BRANCH"
+
 cd "$HOME/search-benchmark-game"
 
 # corpus from S3
 aws s3 cp "s3://sbg-bench-corpus/corpus.json" corpus.json
 
-# compile + index once, then run both bench modes without re-indexing.
-# bench-full runs first: it writes results.json then renames it to results-full.json.
-# bench runs second: writes a fresh results.json (turbopuffer comparison).
-# Both files exist for the S3 upload.
-make compile
-make index
-make bench-full   # full 962-query standard → results-full.json
-make bench        # turbopuffer comparison → results.json
+# branch runs only bench infino-0.1 — skip tantivy/lucene (~30 min saved).
+# nightly (main) benches all three engines as usual.
+MAKE_ARGS=()
+[ "$INFINO_BRANCH" != "main" ] && MAKE_ARGS+=(ENGINES=infino-0.1)
 
-# upload both results for the workflow to fetch
-aws s3 cp results.json      "s3://sbg-bench-corpus/results.json"
-aws s3 cp results-full.json "s3://sbg-bench-corpus/results-full.json"
+# compile + index once, then run both bench modes without re-indexing.
+# bench-full runs first: writes results.json then renames to results-full.json.
+# bench runs second: writes a fresh results.json (turbopuffer comparison).
+make "${MAKE_ARGS[@]}" compile
+make "${MAKE_ARGS[@]}" index
+make "${MAKE_ARGS[@]}" bench-full   # full 962-query standard → results-full.json
+make "${MAKE_ARGS[@]}" bench        # turbopuffer comparison  → results.json
+
+# branch runs upload to branch-keyed S3 paths so nightly results aren't clobbered
+BRANCH_SLUG="${INFINO_BRANCH//\//-}"
+if [ "$INFINO_BRANCH" = "main" ]; then
+  aws s3 cp results.json      "s3://sbg-bench-corpus/results.json"
+  aws s3 cp results-full.json "s3://sbg-bench-corpus/results-full.json"
+else
+  aws s3 cp results.json      "s3://sbg-bench-corpus/results-branch-${BRANCH_SLUG}.json"
+  aws s3 cp results-full.json "s3://sbg-bench-corpus/results-full-branch-${BRANCH_SLUG}.json"
+fi
 BENCH_EOF
 
 chmod +x /tmp/bench.sh
