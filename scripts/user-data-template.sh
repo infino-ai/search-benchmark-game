@@ -47,8 +47,8 @@ source "$HOME/.cargo/env"
 # pre-install the pinned version so the first cargo build doesn't stall
 rustup toolchain install 1.95.0
 
-# JDK 21 only needed for lucene — skip on branch runs (infino-0.1 only)
-if [ "$INFINO_BRANCH" = "main" ]; then
+# JDK 21 only needed for lucene — skip on branch/fork runs (infino-0.1 only)
+if [ "$INFINO_BRANCH" = "main" ] && [ "$INFINO_REPO" = "infino-ai/infino" ]; then
   if [ ! -d "$HOME/jdk-21.0.8+9" ]; then
     wget -q \
       "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.8%2B9/OpenJDK21U-jdk_x64_linux_hotspot_21.0.8_9.tar.gz" \
@@ -75,10 +75,12 @@ cd "$HOME/search-benchmark-game"
 # corpus from S3
 aws s3 cp "s3://sbg-bench-corpus/corpus.json" corpus.json
 
-# branch runs only bench infino-0.1 — skip tantivy/lucene (~30 min saved).
-# nightly (main) benches all three engines as usual.
+# only bench all engines for the official nightly (infino-ai/infino main).
+# fork runs and branch runs only bench infino-0.1 (~30 min saved).
 MAKE_ARGS=()
-[ "$INFINO_BRANCH" != "main" ] && MAKE_ARGS+=(ENGINES=infino-0.1)
+if [ "$INFINO_BRANCH" != "main" ] || [ "$INFINO_REPO" != "infino-ai/infino" ]; then
+  MAKE_ARGS+=(ENGINES=infino-0.1)
+fi
 
 # compile + index once, then run both bench modes without re-indexing.
 # bench-full runs first: writes results.json then renames to results-full.json.
