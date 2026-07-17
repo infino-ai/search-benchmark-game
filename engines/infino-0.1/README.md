@@ -11,10 +11,11 @@ built as multiple segments and read fully in memory.
 | Command / query | Status | Reason |
 |---|---|---|
 | `TOP_10` / `TOP_100` / `TOP_1000` | ✅ benchmarked | ranked top-k with BlockMaxWAND / Block-Max-MaxScore pruning |
-| union (`a b`) | ✅ | `BoolMode::Or` |
-| intersection (`+a +b`) | ✅ | `BoolMode::And` |
+| union (`a b`) | ✅ | bare terms are shoulds under the `Or` default operator |
+| intersection (`+a +b`) | ✅ | `+` must clauses, parsed natively by infino |
+| mixed must/should (`+a b`) | ✅ | lucene `BooleanQuery` semantics: match on musts, shoulds raise scores |
 | `COUNT`, `TOP_*_COUNT` | ✅ benchmarked | native count path — posting-list traversal, no scoring |
-| negation (`-term`) | ❌ UNSUPPORTED | no NOT operator in the FTS API |
+| negation (`-term`) | ✅ | native must-not exclusion |
 | phrase (`"a b"`) | ❌ UNSUPPORTED | no positional postings |
 | `TOP_*_FF` | ❌ UNSUPPORTED | results are score-ordered only |
 

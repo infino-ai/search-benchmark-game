@@ -122,9 +122,10 @@ a slower workaround — so every reported number reflects infino's actual engine
 | Command | Status |
 |---|---|
 | `TOP_10`, `TOP_100`, `TOP_1000` (union / intersection) | ✅ benchmarked |
-| `COUNT`, `TOP_*_COUNT` | ⚠️ benchmarked — unoptimized (full search + count; no dedicated count path) |
+| `COUNT`, `TOP_*_COUNT` | ✅ benchmarked — native count path (posting-list traversal, no scoring) |
+| Mixed must/should (`+a b`) | ✅ benchmarked — native lucene `BooleanQuery` clause semantics (`+must`, bare should, `-must-not`) |
+| Negation (`-term`) | ✅ benchmarked — native must-not exclusion |
 | Phrase queries | ❌ UNSUPPORTED — no positional postings |
-| Negation (`-term`) | ❌ UNSUPPORTED — no NOT operator |
 | `TOP_*_FILTER_%` | ❌ UNSUPPORTED — results are score-ordered only |
 
 Tokenization: `AsciiLowerTokenizer` (split on non-alphanumeric, ASCII-lowercase, no stemming) — equivalent to Lucene's `StandardTokenizer` on this corpus. BM25 with Lucene defaults (`k1 = 1.2`, `b = 0.75`).

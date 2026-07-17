@@ -5,8 +5,13 @@
 //!
 //! Supported: COUNT, TOP_10/100/1000, TOP_{1,5,10,100,1000}_COUNT.
 //! COUNT and TOP_*_COUNT use the native count() path (posting-list traversal,
-//! no scoring). Phrase queries, `*_FF` (fast-field ordering) and
-//! UNOPTIMIZED_COUNT are answered "UNSUPPORTED" — see README.md.
+//! no scoring). The query string passes through verbatim: infino parses
+//! the lucene clause sigils natively (`+term` must, `-term` must-not,
+//! bare term should) under `BoolMode::Or` as the default operator, so
+//! `+a +b` intersects, `a b` unions, and `+a b` matches on `a` with `b`
+//! scoring-only — the same BooleanQuery semantics lucene applies.
+//! Phrase queries, `*_FF` (fast-field ordering) and UNOPTIMIZED_COUNT
+//! are answered "UNSUPPORTED" — see README.md.
 
 use std::env;
 use std::io::{self, BufRead};
@@ -56,13 +61,16 @@ fn main() {
         let query = parts.next().unwrap_or("");
 
         // UNSUPPORTED: phrase queries ("a b") — no positional postings.
-        // Negation (-term) is now supported natively by infino.
+        // Clause sigils (+must / -must-not) are parsed natively by
+        // infino; bare terms are shoulds under the Or default operator.
         if query.contains('"') {
             println!("UNSUPPORTED");
             continue;
         }
 
-        let mode = query_mode(query);
+        // Lucene's default operator: bare terms are OR'd. All clause
+        // structure (+/-) rides in the query string itself.
+        let mode = BoolMode::Or;
 
         let result = match command {
             _ if query.split_whitespace().all(|t| t.starts_with('-') || t.trim().is_empty()) => {
@@ -119,17 +127,3 @@ fn top_k_count(command: &str) -> usize {
     }
 }
 
-/// Determine BoolMode from the query. `+a +b` (all positive terms required) → AND;
-/// anything else → OR. `-term` tokens are negations and excluded from the mode check.
-/// The raw query string is passed to infino as-is; its tokenizer handles `+`/`-` stripping.
-fn query_mode(query: &str) -> BoolMode {
-    let positives: Vec<&str> = query
-        .split_whitespace()
-        .filter(|t| !t.starts_with('-'))
-        .collect();
-    if !positives.is_empty() && positives.iter().all(|t| t.starts_with('+')) {
-        BoolMode::And
-    } else {
-        BoolMode::Or
-    }
-}
