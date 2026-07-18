@@ -16,7 +16,7 @@ built as multiple segments and read fully in memory.
 | mixed must/should (`+a b`) | ✅ | lucene `BooleanQuery` semantics: match on musts, shoulds raise scores |
 | `COUNT`, `TOP_*_COUNT` | ✅ benchmarked | native count path — posting-list traversal, no scoring |
 | negation (`-term`) | ✅ | native must-not exclusion |
-| phrase (`"a b"`) | ❌ UNSUPPORTED | no positional postings |
+| phrase (`"a b"`) | ✅ | exact adjacency verified against positional postings |
 | `TOP_*_FF` | ❌ UNSUPPORTED | results are score-ordered only |
 
 ## Tokenization & scoring

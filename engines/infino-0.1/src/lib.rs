@@ -58,6 +58,8 @@ pub fn options(storage: Arc<dyn StorageProvider>) -> SupertableOptions {
         schema(),
         vec![FtsConfig {
             column: COLUMN.to_string(),
+            // Token positions on: phrase queries are first-class.
+            positions: true,
         }],
         vec![],
         Some(Arc::new(AsciiLowerTokenizer)),

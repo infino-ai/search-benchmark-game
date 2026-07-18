@@ -7,11 +7,11 @@
 //! COUNT and TOP_*_COUNT use the native count() path (posting-list traversal,
 //! no scoring). The query string passes through verbatim: infino parses
 //! the lucene clause sigils natively (`+term` must, `-term` must-not,
-//! bare term should) under `BoolMode::Or` as the default operator, so
-//! `+a +b` intersects, `a b` unions, and `+a b` matches on `a` with `b`
-//! scoring-only — the same BooleanQuery semantics lucene applies.
-//! Phrase queries, `*_FF` (fast-field ordering) and UNOPTIMIZED_COUNT
-//! are answered "UNSUPPORTED" — see README.md.
+//! bare term should) under `BoolMode::Or` as the default operator, and
+//! double-quoted runs are exact phrases verified against token
+//! positions — the same BooleanQuery + PhraseQuery semantics lucene
+//! applies. `*_FF` (fast-field ordering) and UNOPTIMIZED_COUNT are
+//! answered "UNSUPPORTED" — see README.md.
 
 use std::env;
 use std::io::{self, BufRead};
@@ -60,16 +60,9 @@ fn main() {
         let command = parts.next().unwrap_or("");
         let query = parts.next().unwrap_or("");
 
-        // UNSUPPORTED: phrase queries ("a b") — no positional postings.
-        // Clause sigils (+must / -must-not) are parsed natively by
-        // infino; bare terms are shoulds under the Or default operator.
-        if query.contains('"') {
-            println!("UNSUPPORTED");
-            continue;
-        }
-
         // Lucene's default operator: bare terms are OR'd. All clause
-        // structure (+/-) rides in the query string itself.
+        // structure — +/- sigils and quoted phrases — rides in the
+        // query string itself; infino parses it natively.
         let mode = BoolMode::Or;
 
         let result = match command {
