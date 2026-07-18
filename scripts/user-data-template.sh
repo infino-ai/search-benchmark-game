@@ -20,7 +20,7 @@ signal_done() {
     --region "$REGION" 2>/dev/null || true
 }
 
-trap 'signal_done error' EXIT
+trap 'echo "=== disk usage at exit ==="; df -h; signal_done error' EXIT
 
 # system deps (gradle needs unzip; bzip2 for corpus fallback)
 dnf install -y git make gcc gcc-c++ cmake clang bzip2 python3 unzip wget
@@ -34,6 +34,13 @@ chmod 644 /run/sbg/gh-token   # ec2-user needs to read this
 cat > /tmp/bench.sh << 'BENCH_EOF'
 #!/bin/bash
 set -euo pipefail
+
+# Index-build spill scratch goes to $TMPDIR. The AMI mounts /tmp on tmpfs
+# (sized to half of RAM — 8 GiB here), which a positional index build
+# overflows, and tmpfs pages compete with the writer's own memory. Point
+# scratch at the EBS volume instead.
+mkdir -p "$HOME/tmp"
+export TMPDIR="$HOME/tmp"
 
 # __INFINO_BRANCH__, __INFINO_REPO__, and __SBG_BRANCH__ are substituted by the
 # GitHub Actions workflow at launch time. SBG_BRANCH is the ref the workflow was
