@@ -5,7 +5,7 @@ WIKI_SRC = "https://www.dropbox.com/s/wwnfnu441w1ec9p/wiki-articles.json.bz2"
 
 COMMANDS ?= TOP_10 TOP_100 TOP_1000 TOP_100_COUNT COUNT
 
-ENGINES ?= infino-0.1 tantivy-0.26 lucene-10.4.0
+ENGINES ?= infino-0.1 tantivy-0.26 lucene-10.5.0 lucene-10.5.0-bp
 QUERIES ?= queries.txt
 PORT ?= 8080
 WARMUP_TIME ?= 60
