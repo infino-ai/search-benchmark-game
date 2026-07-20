@@ -20,7 +20,7 @@ signal_done() {
     --region "$REGION" 2>/dev/null || true
 }
 
-trap 'signal_done error' EXIT
+trap 'echo "=== disk usage at exit ==="; df -h; signal_done error' EXIT
 
 # system deps (gradle needs unzip; bzip2 for corpus fallback)
 dnf install -y git make gcc gcc-c++ cmake clang bzip2 python3 unzip wget
@@ -35,9 +35,19 @@ cat > /tmp/bench.sh << 'BENCH_EOF'
 #!/bin/bash
 set -euo pipefail
 
-# __INFINO_BRANCH__ and __INFINO_REPO__ are substituted by the GitHub Actions workflow at launch time.
+# Index-build spill scratch goes to $TMPDIR. The AMI mounts /tmp on tmpfs
+# (sized to half of RAM — 8 GiB here), which a positional index build
+# overflows, and tmpfs pages compete with the writer's own memory. Point
+# scratch at the EBS volume instead.
+mkdir -p "$HOME/tmp"
+export TMPDIR="$HOME/tmp"
+
+# __INFINO_BRANCH__, __INFINO_REPO__, and __SBG_BRANCH__ are substituted by the
+# GitHub Actions workflow at launch time. SBG_BRANCH is the ref the workflow was
+# dispatched on, so the harness code that runs is the same code that launched it.
 INFINO_BRANCH="__INFINO_BRANCH__"
 INFINO_REPO="__INFINO_REPO__"
+SBG_BRANCH="__SBG_BRANCH__"
 
 # Rust toolchain always needed (infino + tantivy; rust-toolchain.toml pins version)
 if ! command -v rustup &>/dev/null; then
@@ -67,8 +77,9 @@ git clone "https://github.com/${INFINO_REPO}.git" "$HOME/infino"
 git clone "https://x-access-token:${GH_TOKEN}@github.com/infino-ai/search-benchmark-game.git" \
   "$HOME/search-benchmark-game"
 
-# check out the requested branch before compilation
+# check out the requested branches before compilation
 git -C "$HOME/infino" checkout "$INFINO_BRANCH"
+git -C "$HOME/search-benchmark-game" checkout "$SBG_BRANCH"
 
 cd "$HOME/search-benchmark-game"
 
