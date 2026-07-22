@@ -53,6 +53,12 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::381491836522:role/sbg-ci
           aws-region: us-east-1
+          # The wait step polls SSM for the whole bench; the default 1 h
+          # OIDC session expires mid-run once a bench exceeds an hour, and
+          # get-parameter then fails silently -> the run hangs to the 3 h
+          # timeout despite a successful bench. Hold credentials past the
+          # 3 h wait timeout. (sbg-ci's max session duration must allow this.)
+          role-duration-seconds: 14400
 
       # Clean up any leftover done-signal from a previous failed run
       - name: Clear stale done-signal
@@ -115,10 +121,22 @@ jobs:
         run: |
           echo "Polling /sbg-bench/done every 60s …"
           while true; do
-            STATUS=$(aws ssm get-parameter \
-              --name /sbg-bench/done \
-              --query 'Parameter.Value' \
-              --output text 2>/dev/null || echo "pending")
+            # Distinguish "not set yet" (ParameterNotFound — keep polling)
+            # from any other failure (expired creds, throttle, API error).
+            # The old `2>/dev/null || echo pending` masked those and spun
+            # to the 3 h timeout on expired credentials; fail loudly here.
+            if OUT=$(aws ssm get-parameter \
+                --name /sbg-bench/done \
+                --query 'Parameter.Value' \
+                --output text 2>&1); then
+              STATUS="$OUT"
+            elif printf '%s' "$OUT" | grep -q "ParameterNotFound"; then
+              STATUS="pending"
+            else
+              echo "get-parameter failed (not a missing parameter):"
+              echo "$OUT"
+              exit 1
+            fi
             echo "$(date -u +%H:%M:%S)  status=$STATUS"
             [ "$STATUS" = "ok" ]    && break
             [ "$STATUS" = "error" ] && { echo "Bench reported error on EC2."; exit 1; }
