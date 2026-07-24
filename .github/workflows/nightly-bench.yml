@@ -143,6 +143,20 @@ jobs:
             sleep 60
           done
 
+      - name: Fetch EC2 logs on failure
+        if: failure()
+        run: |
+          echo "=== EC2 Benchmark Log ===" | tee bench-output.log
+          aws s3 cp "s3://$CORPUS_BUCKET/bench-log.txt" - 2>/dev/null | tee -a bench-output.log || echo "Failed to fetch log from S3"
+
+      - name: Upload logs as artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-logs
+          path: bench-output.log
+          retention-days: 7
+
       - name: Download results from S3
         run: |
           if [ "$INFINO_BRANCH" = "main" ] && [ "$INFINO_REPO" = "infino-ai/infino" ]; then
