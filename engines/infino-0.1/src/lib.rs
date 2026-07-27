@@ -48,11 +48,17 @@ pub fn writer_threads() -> usize {
 /// whole in RAM. This produces multiple segments (the realistic supertable
 /// shape) but builds fast and with bounded memory.
 pub fn options(storage: Arc<dyn StorageProvider>) -> SupertableOptions {
-    let pool = Arc::new(
+    let writer_pool = Arc::new(
         rayon::ThreadPoolBuilder::new()
             .num_threads(writer_threads())
             .build()
             .expect("build writer pool"),
+    );
+    let reader_pool = Arc::new(
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .expect("build reader pool"),
     );
     SupertableOptions::new(
         schema(),
@@ -65,7 +71,8 @@ pub fn options(storage: Arc<dyn StorageProvider>) -> SupertableOptions {
         Some(Arc::new(AsciiLowerTokenizer)),
     )
     .expect("valid supertable options")
-    .with_writer_pool(pool)
+    .with_writer_pool(writer_pool)
+    .with_reader_pool(reader_pool)
     .with_commit_threshold_size_mb(4096)
     .with_storage(storage)
 }
