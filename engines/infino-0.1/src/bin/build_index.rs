@@ -10,15 +10,16 @@
 use std::env;
 use std::io::{self, BufRead};
 use std::sync::Arc;
+use std::time::Duration;
 
 use arrow_array::{LargeStringArray, RecordBatch};
-use infino::{CompactionSettings, OptimizeOptions};
 use infino::storage::{LocalFsStorageProvider, StorageProvider};
 use infino::supertable::Supertable;
+use infino::{CompactionSettings, GcSettings, OptimizeOptions};
 use serde::Deserialize;
 
 /// Large enough that the entire Wikipedia BM25 index fits in one output segment.
-const COMPACT_TARGET_MB: u64 = 32 * 1024;
+const COMPACT_TARGET_MB: u64 = 2048;
 
 const BATCH: usize = 50_000;
 
@@ -63,15 +64,26 @@ fn main() {
     eprintln!("indexed {total} docs into the supertable");
 
     eprintln!("compacting…");
-    st.optimize(&OptimizeOptions::compact(CompactionSettings {
-        target_superfile_size_mb: COMPACT_TARGET_MB,
-        ..Default::default()
-    }))
+    st.optimize(
+        &OptimizeOptions::compact(CompactionSettings {
+            target_superfile_size_mb: COMPACT_TARGET_MB,
+            min_fill_percent: 1,
+            max_memory_mb: COMPACT_TARGET_MB + 2048,
+            ..Default::default()
+        })
+        .with_gc(GcSettings {
+            safety_gap: Duration::ZERO,
+        }),
+    )
     .expect("optimize");
     eprintln!("compact done");
 }
 
-fn append(writer: &mut infino::supertable::SupertableWriter, schema: &Arc<arrow_schema::Schema>, buf: &mut Vec<String>) {
+fn append(
+    writer: &mut infino::supertable::SupertableWriter,
+    schema: &Arc<arrow_schema::Schema>,
+    buf: &mut Vec<String>,
+) {
     let arr = LargeStringArray::from(buf.iter().map(String::as_str).collect::<Vec<_>>());
     let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(arr)]).expect("record batch");
     writer.append(&batch).expect("append batch");
