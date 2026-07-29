@@ -18,7 +18,7 @@ use std::io::{self, BufRead};
 use std::sync::Arc;
 
 use infino::storage::{LocalFsStorageProvider, StorageProvider};
-use infino::superfile::fts::reader::BoolMode;
+use infino::superfile::fts::reader::{BoolMode, Bm25Stats};
 use infino::supertable::Supertable;
 use infino::supertable::reader_cache::{InMemoryReaderCache, SuperfileReaderCache};
 
@@ -40,7 +40,7 @@ fn main() {
     // We still need a runtime for the preload loop below.
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     let st = Supertable::open(opts).expect("open supertable");
-    let reader = st.reader();
+    let reader = st.reader().expect("reader");
 
     // Preload all segments into the in-memory tier.
     let uris: Vec<_> = reader.manifest().superfiles.iter().map(|e| e.uri).collect();
@@ -72,7 +72,7 @@ fn main() {
             }
             _ if query.trim().is_empty() => Ok(0usize),
             "TOP_10" | "TOP_100" | "TOP_1000" => reader
-                .bm25_search(COLUMN, query, top_k(command), mode, None)
+                .bm25_search(COLUMN, query, top_k(command), mode, Bm25Stats::PerSuperfile, None)
                 .map(|_| 1),
             // Plain COUNT: native posting-list traversal, no scoring.
             "COUNT" => reader
@@ -82,7 +82,7 @@ fn main() {
             // two passes, matching what engines like Lucene do for this command.
             "TOP_1_COUNT" | "TOP_5_COUNT" | "TOP_10_COUNT"
             | "TOP_100_COUNT" | "TOP_1000_COUNT" => reader
-                .bm25_search(COLUMN, query, top_k_count(command), mode, None)
+                .bm25_search(COLUMN, query, top_k_count(command), mode, Bm25Stats::PerSuperfile, None)
                 .and_then(|_| reader.count(COLUMN, query, mode))
                 .map(|n| n as usize),
             _ => {
