@@ -19,7 +19,7 @@ use infino::{CompactionSettings, GcSettings, OptimizeOptions};
 use serde::Deserialize;
 
 /// Large enough that the entire Wikipedia BM25 index fits in one output segment.
-const COMPACT_TARGET_MB: u64 = 2048;
+const COMPACT_TARGET_MB: u64 = 1024;
 
 const BATCH: usize = 50_000;
 
