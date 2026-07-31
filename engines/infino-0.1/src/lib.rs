@@ -13,6 +13,7 @@ use infino::storage::StorageProvider;
 use infino::superfile::builder::FtsConfig;
 use infino::superfile::fts::tokenize::AsciiLowerTokenizer;
 use infino::supertable::SupertableOptions;
+use infino::supertable::manifest::list::PartitionStrategy;
 
 /// The single indexed full-text column.
 pub const COLUMN: &str = "text";
@@ -71,6 +72,10 @@ pub fn options(storage: Arc<dyn StorageProvider>) -> SupertableOptions {
         Some(Arc::new(AsciiLowerTokenizer)),
     )
     .expect("valid supertable options")
+    .with_partition_strategy(PartitionStrategy::Hash {
+        column: "_id".to_string(),
+        n_buckets: 1,
+    })
     .with_writer_pool(writer_pool)
     .with_reader_pool(reader_pool)
     .with_commit_threshold_size_mb(4096)
