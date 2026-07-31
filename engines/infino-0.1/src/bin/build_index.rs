@@ -19,9 +19,9 @@ use infino::{CompactionSettings, GcSettings, OptimizeOptions};
 use serde::Deserialize;
 
 /// Large enough that the entire Wikipedia BM25 index fits in one output segment.
-const COMPACT_TARGET_MB: u64 = 1024;
+const COMPACT_TARGET_MB: u64 = 4096;
 
-const BATCH: usize = 50_000;
+const BATCH: usize = 100_000;
 
 #[derive(Deserialize)]
 struct Doc {
