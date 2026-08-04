@@ -31,7 +31,7 @@ clean:
 
 index:
 	@echo "--- Indexing corpus ---"
-	@for engine in $(ENGINES); do cd ${shell pwd}/engines/$$engine && make index ; done
+	@for engine in $(ENGINES); do cd ${shell pwd}/engines/$$engine && make index || exit 1; done
 
 fetch-tpuf:
 	@python3 scripts/fetch_tpuf_latest.py
