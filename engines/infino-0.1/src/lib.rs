@@ -27,18 +27,18 @@ pub fn schema() -> Arc<Schema> {
     )]))
 }
 
-/// Number of writer-pool threads (also the number of segments produced per
-/// commit, since a commit shards across `min(pool_threads, rows)`).
+/// Number of writer-pool threads. A commit shards its buffered rows across
+/// `min(pool_threads, rows)` builders, so this is the number of superfiles a
+/// single commit produces.
 ///
-/// Tuned for c7i.2xlarge (8 vCPU, 16 GiB). Capped at 4: fewer threads → fewer
-/// segments per commit (~12 total vs ~24 at 8) → less query-time fan-out, and
-/// lower build peak memory (4 parallel shard builds instead of 8). Build is a
-/// little slower but stays well within 16 GiB.
+/// Pinned to 1: one writer ⇒ one shard ⇒ one superfile per commit. Combined
+/// with auto-flush disabled (`with_commit_threshold_size_mb(0)` below, so the
+/// whole corpus is a single commit), the build yields exactly one superfile —
+/// no post-ingest compaction needed. This matches tantivy/lucene's single
+/// force-merged segment and keeps the query path a single-unit fan-out
+/// (genuinely single-threaded).
 pub fn writer_threads() -> usize {
-    std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
-        .min(4)
+    1
 }
 
 /// Options shared by builder and reader.
@@ -82,6 +82,11 @@ pub fn options(storage: Arc<dyn StorageProvider>) -> SupertableOptions {
     // times in-process, so pin the manifest at open and never pay the
     // per-query pointer re-check that the default BoundedStaleness policy does.
     .with_read_consistency(Consistency::Snapshot)
-    .with_commit_threshold_size_mb(4096)
+    // Disable auto-flush (0 = never flush on buffer size). The whole corpus is
+    // buffered and written in a single commit, which — with `writer_threads = 1`
+    // — produces exactly one superfile directly at ingest, so no compaction is
+    // needed. (A non-zero threshold flushes mid-ingest, emitting one superfile
+    // per flush round and forcing a compaction to re-merge them.)
+    .with_commit_threshold_size_mb(0)
     .with_storage(storage)
 }
