@@ -210,9 +210,28 @@ jobs:
           # Remove the credential helper installed by actions/checkout so our
           # App token in the push URL is used instead of the default GITHUB_TOKEN.
           git config --unset-all http.https://github.com/.extraheader || true
-          git push \
-            "https://x-access-token:${{ steps.push-token.outputs.token }}@github.com/infino-ai/search-benchmark-game.git" \
-            HEAD:master
+          PUSH_URL="https://x-access-token:${{ steps.push-token.outputs.token }}@github.com/infino-ai/search-benchmark-game.git"
+          # The bench runs for ~1 h, during which master can advance (e.g. a
+          # merged PR). A plain push would be rejected as non-fast-forward, so
+          # rebase the results commit onto the latest remote master before
+          # pushing. The results commit only touches results*.json, so it
+          # rebases cleanly over code changes. Retry to absorb a lost race.
+          for attempt in 1 2 3 4 5; do
+            git fetch "$PUSH_URL" master
+            if ! git rebase FETCH_HEAD; then
+              git rebase --abort
+              echo "rebase onto remote master failed" >&2
+              exit 1
+            fi
+            if git push "$PUSH_URL" HEAD:master; then
+              echo "pushed results on attempt $attempt"
+              exit 0
+            fi
+            echo "push rejected (attempt $attempt) — remote advanced, retrying…"
+            sleep 5
+          done
+          echo "failed to push results after 5 attempts" >&2
+          exit 1
 
       # Always clean up — even if the bench or push step failed
       - name: Delete SSM done-signal
