@@ -12,8 +12,8 @@ use arrow_schema::{DataType, Field, Schema};
 use infino::storage::StorageProvider;
 use infino::superfile::builder::FtsConfig;
 use infino::superfile::fts::tokenize::AsciiLowerTokenizer;
-use infino::supertable::SupertableOptions;
 use infino::supertable::manifest::list::PartitionStrategy;
+use infino::supertable::{Consistency, SupertableOptions};
 
 /// The single indexed full-text column.
 pub const COLUMN: &str = "text";
@@ -78,6 +78,10 @@ pub fn options(storage: Arc<dyn StorageProvider>) -> SupertableOptions {
     })
     .with_writer_pool(writer_pool)
     .with_reader_pool(reader_pool)
+    // Snapshot read consistency: the bench index is built once and read many
+    // times in-process, so pin the manifest at open and never pay the
+    // per-query pointer re-check that the default BoundedStaleness policy does.
+    .with_read_consistency(Consistency::Snapshot)
     .with_commit_threshold_size_mb(4096)
     .with_storage(storage)
 }
