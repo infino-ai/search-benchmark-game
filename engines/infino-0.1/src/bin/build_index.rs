@@ -77,6 +77,22 @@ fn main() {
     )
     .expect("optimize");
     eprintln!("compact done");
+
+    // Report how many superfiles the table compacted to. The query path
+    // fans out one work unit per superfile, so single-threaded latency (and
+    // the fairness of the comparison against tantivy/lucene's single
+    // force-merged segment) hinges on this being 1. If the bench machine's
+    // memory forces the merge to split, this prints > 1 and the compaction
+    // budget needs raising.
+    let reader = st.reader().expect("open reader after compact");
+    let n_superfiles = reader.manifest().superfiles.len();
+    eprintln!("SUPERFILE_COUNT after compact: {n_superfiles}");
+    if n_superfiles != 1 {
+        eprintln!(
+            "WARNING: expected a single compacted superfile, got {n_superfiles} — \
+             queries will fan out over {n_superfiles} units single-threaded"
+        );
+    }
 }
 
 fn append(
