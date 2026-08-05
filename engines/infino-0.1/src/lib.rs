@@ -29,27 +29,28 @@ pub fn schema() -> Arc<Schema> {
     )]))
 }
 
-/// Number of writer-pool threads. A commit shards its buffered rows across
-/// `min(pool_threads, rows)` builders, so this is the number of superfiles a
-/// single commit produces.
+/// Number of writer-pool threads (also the number of segments produced per
+/// commit, since a commit shards across `min(pool_threads, rows)`).
 ///
-/// Pinned to 1: one writer ⇒ one shard ⇒ one superfile per commit. Combined
-/// with auto-flush disabled (`with_commit_threshold_size_mb(0)` below, so the
-/// whole corpus is a single commit), the build yields exactly one superfile —
-/// no post-ingest compaction needed. This matches tantivy/lucene's single
-/// force-merged segment and keeps the query path a single-unit fan-out
-/// (genuinely single-threaded).
+/// Tuned for c7i.2xlarge (8 vCPU, 16 GiB). Capped at 4: fewer threads → fewer
+/// segments per commit (~12 total vs ~24 at 8) → less query-time fan-out, and
+/// lower build peak memory (4 parallel shard builds instead of 8). Build is a
+/// little slower but stays well within 16 GiB. A post-ingest `optimize`
+/// (see `build_index`) then compacts every segment into one superfile.
 pub fn writer_threads() -> usize {
-    1
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .min(4)
 }
 
 /// Options shared by builder and reader.
 ///
-/// Multi-threaded build: a multi-thread writer pool builds segments in
-/// parallel, and a 1 GiB auto-flush threshold caps the in-memory write
-/// buffer — so the corpus is committed in several rounds rather than held
-/// whole in RAM. This produces multiple segments (the realistic supertable
-/// shape) but builds fast and with bounded memory.
+/// Bounded-memory build: a multi-thread writer pool builds segments in parallel
+/// and a `with_commit_threshold_size_mb` auto-flush caps the in-memory write
+/// buffer, so the corpus is committed in several rounds rather than held whole
+/// in RAM. This emits multiple superfiles; `build_index`'s post-ingest
+/// `optimize` compacts them into one.
 pub fn options(storage: Arc<dyn StorageProvider>) -> SupertableOptions {
     let writer_pool = Arc::new(
         rayon::ThreadPoolBuilder::new()
@@ -95,12 +96,11 @@ pub fn options(storage: Arc<dyn StorageProvider>) -> SupertableOptions {
     // times in-process, so pin the manifest at open and never pay the
     // per-query pointer re-check that the default BoundedStaleness policy does.
     .with_read_consistency(Consistency::Snapshot)
-    // Disable auto-flush (0 = never flush on buffer size). The whole corpus is
-    // buffered and written in a single commit, which — with `writer_threads = 1`
-    // — produces exactly one superfile directly at ingest, so no compaction is
-    // needed. (A non-zero threshold flushes mid-ingest, emitting one superfile
-    // per flush round and forcing a compaction to re-merge them.)
-    .with_commit_threshold_size_mb(0)
+    // Auto-flush every 4 GiB of buffered rows so each commit's peak memory
+    // stays bounded (buffer + that chunk's index) instead of the whole corpus
+    // at once. Ingest emits several superfiles; `build_index`'s post-ingest
+    // `optimize` compacts them into one.
+    .with_commit_threshold_size_mb(4096)
     .with_storage(storage)
     .with_disk_cache(disk_cache)
 }
