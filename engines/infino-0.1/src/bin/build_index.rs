@@ -1,21 +1,25 @@
-//! Build an infino supertable from newline-delimited JSON as a single superfile.
+//! Build an infino supertable from newline-delimited JSON, then compact it.
 //!
 //! Each input line is `{"id": "...", "text": "...", "sort_field": <u64>}`.
-//! Only `text` is indexed. Docs are streamed in 50 k-doc batches and written
-//! in one commit (auto-flush is disabled and the writer pool is a single
-//! thread — see `infino_bench::options`), so ingest emits exactly one
-//! superfile. That matches the single force-merged segment tantivy and Lucene
-//! produce, so no post-ingest compaction is needed and the query path is a
-//! single-unit fan-out.
+//! Only `text` is indexed. Docs are streamed in 50 k-doc batches; a 4 GiB
+//! auto-flush threshold causes the writer to commit several segments
+//! incrementally (bounded build memory). After ingest, `optimize()` compacts
+//! all segments into one, matching the single-segment shape that tantivy and
+//! Lucene produce — so query-path fan-out overhead is equivalent.
 
 use std::env;
 use std::io::{self, BufRead};
 use std::sync::Arc;
+use std::time::Duration;
 
 use arrow_array::{LargeStringArray, RecordBatch};
 use infino::storage::{LocalFsStorageProvider, StorageProvider};
 use infino::supertable::Supertable;
+use infino::{CompactionSettings, GcSettings, OptimizeOptions};
 use serde::Deserialize;
+
+/// Large enough that the entire Wikipedia BM25 index fits in one output segment.
+const COMPACT_TARGET_MB: u64 = 8 * 1024;
 
 const BATCH: usize = 50_000;
 
@@ -59,21 +63,36 @@ fn main() {
     drop(writer);
     eprintln!("indexed {total} docs into the supertable");
 
-    // Report how many superfiles ingest produced. With a single-thread writer
-    // pool and auto-flush disabled the whole corpus commits as one superfile,
-    // so this must be 1 — the query path fans out one work unit per superfile,
-    // and single-threaded fairness against tantivy/lucene's single segment
-    // hinges on it. If it prints > 1, the build split (e.g. auto-flush fired)
-    // and the query path would fan out over several units single-threaded.
-    let reader = st.reader().expect("open reader after build");
+    eprintln!("compacting…");
+    st.optimize(
+        &OptimizeOptions::compact(CompactionSettings {
+            target_superfile_size_mb: COMPACT_TARGET_MB,
+            min_fill_percent: 1,
+            max_memory_mb: COMPACT_TARGET_MB + 2048,
+            ..Default::default()
+        })
+        .with_gc(GcSettings {
+            safety_gap: Duration::ZERO,
+        }),
+    )
+    .expect("optimize");
+    eprintln!("compact done");
+
+    // Report how many superfiles the table compacted to. The query path fans
+    // out one work unit per superfile, so single-threaded latency (and the
+    // fairness of the comparison against tantivy/lucene's single force-merged
+    // segment) hinges on this being 1.
+    let reader = st.reader().expect("open reader after compact");
     let n_superfiles = reader.manifest().superfiles.len();
-    eprintln!("SUPERFILE_COUNT after build: {n_superfiles}");
+    eprintln!("SUPERFILE_COUNT after compact: {n_superfiles}");
     if n_superfiles != 1 {
-        // Fail hard: a multi-superfile index fans out single-threaded and would
-        // publish a silently-degraded, unfair infino result. Better to fail the
-        // build (and the whole run) than bench a bad index.
+        // Fail hard: if compaction didn't reach a single superfile (e.g. it ran
+        // out of memory and left the ingest segments in place), the query path
+        // would fan out over several units single-threaded and publish a
+        // silently-degraded, unfair infino result. Better to fail the build
+        // (and the whole run, via the Makefile's `|| exit 1`) than bench it.
         eprintln!(
-            "ERROR: expected a single superfile, got {n_superfiles} — \
+            "ERROR: expected a single compacted superfile, got {n_superfiles} — \
              refusing to bench a multi-superfile index (it would fan out \
              {n_superfiles} units single-threaded). Failing the build."
         );
