@@ -6,6 +6,7 @@
 //! the schema / FTS column / tokenizer / pool config here guarantees they
 //! agree.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use arrow_schema::{DataType, Field, Schema};
@@ -13,6 +14,7 @@ use infino::storage::StorageProvider;
 use infino::superfile::builder::FtsConfig;
 use infino::superfile::fts::tokenize::AsciiLowerTokenizer;
 use infino::supertable::manifest::list::PartitionStrategy;
+use infino::supertable::reader_cache::{DiskCacheConfig, DiskCacheStore};
 use infino::supertable::{Consistency, SupertableOptions};
 
 /// The single indexed full-text column.
@@ -61,6 +63,17 @@ pub fn options(storage: Arc<dyn StorageProvider>) -> SupertableOptions {
             .build()
             .expect("build reader pool"),
     );
+
+    let disk_cache = DiskCacheStore::new(
+        Arc::clone(&storage),
+        DiskCacheConfig {
+            cache_root: std::env::temp_dir().join("infino-bench-disk-cache"),
+            ..Default::default()
+        },
+        Arc::new(HashSet::new),
+    )
+    .expect("build disk cache");
+
     SupertableOptions::new(
         schema(),
         vec![FtsConfig {
@@ -89,4 +102,5 @@ pub fn options(storage: Arc<dyn StorageProvider>) -> SupertableOptions {
     // per flush round and forcing a compaction to re-merge them.)
     .with_commit_threshold_size_mb(0)
     .with_storage(storage)
+    .with_disk_cache(disk_cache)
 }
