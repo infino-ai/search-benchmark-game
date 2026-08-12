@@ -5,8 +5,13 @@ name: Nightly benchmark
 #
 # workflow_dispatch accepts an optional `infino_branch` input. When set to
 # anything other than "main", only infino-0.1 is benched (tantivy/lucene
-# skipped, ~30 min saved) and results are NOT committed to master — instead
-# a comparison vs the committed main baseline is posted to the job summary.
+# skipped, ~30 min saved). The nightly results.json/results-full.json are NOT
+# overwritten; instead the run (1) posts a comparison vs the committed main
+# baseline to the job summary, and (2) publishes a per-fork dashboard page at
+# <fork_user>/full showing this branch's infino column alongside the baseline
+# engines. Each fork's page is keyed by fork owner, so the latest branch run
+# from that fork overwrites it. The page is committed under web/build/, which
+# pages.yml then deploys.
 
 on:
   schedule:
@@ -186,6 +191,70 @@ jobs:
             "results-full-branch-${RUN_SLUG}.json" \
             --label "$RUN_LABEL (full 962-query)" \
             >> "$GITHUB_STEP_SUMMARY"
+
+      # Branch/fork runs: build a per-fork /full-style dashboard page that shows
+      # this branch's infino column spliced into the committed baseline (which
+      # carries tantivy/lucene + main's infino). It lives at <fork_user>/full;
+      # the latest branch run from a fork overwrites that fork's page.
+      - name: Build fork full-benchmark page
+        if: env.INFINO_BRANCH != 'main' || env.INFINO_REPO != 'infino-ai/infino'
+        id: fork-page
+        run: |
+          RUN_SLUG="${INFINO_REPO//\//-}-${INFINO_BRANCH//\//-}"
+          FORK_USER="${INFINO_REPO%%/*}"
+          echo "fork_user=$FORK_USER" >> "$GITHUB_OUTPUT"
+          python3 scripts/publish_branch_full.py \
+            --main-full   results-full.json \
+            --branch-full "results-full-branch-${RUN_SLUG}.json" \
+            --template    web/build/full/index.html \
+            --out-dir     "web/build/${FORK_USER}/full" \
+            --label       "${INFINO_REPO}@${INFINO_BRANCH}"
+
+      # Fresh token scoped to the SBG repo for the page push (the app-token from
+      # launch has likely expired after the ~2 h bench).
+      - name: Generate token to push fork page
+        if: env.INFINO_BRANCH != 'main' || env.INFINO_REPO != 'infino-ai/infino'
+        uses: actions/create-github-app-token@v1
+        id: fork-push-token
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: infino-ai
+          repositories: "search-benchmark-game"
+
+      - name: Commit and push fork page
+        if: env.INFINO_BRANCH != 'main' || env.INFINO_REPO != 'infino-ai/infino'
+        run: |
+          FORK_USER="${{ steps.fork-page.outputs.fork_user }}"
+          git config user.name  "sbg-ci"
+          git config user.email "sbg-ci@infino.ai"
+          git add "web/build/${FORK_USER}/full"
+          git diff --cached --quiet && echo "fork page unchanged — nothing to push" && exit 0
+          git commit -m "pages: ${INFINO_REPO}@${INFINO_BRANCH} full-benchmark run"
+          # Remove actions/checkout's credential helper so the App token in the
+          # push URL is used instead of the default GITHUB_TOKEN.
+          git config --unset-all http.https://github.com/.extraheader || true
+          PUSH_URL="https://x-access-token:${{ steps.fork-push-token.outputs.token }}@github.com/infino-ai/search-benchmark-game.git"
+          # master can advance during the ~1 h bench (e.g. a nightly results
+          # commit). The page commit only touches web/build/<fork>/full/**, so
+          # it rebases cleanly over other changes. Retry to absorb a lost race,
+          # matching the results push below.
+          for attempt in 1 2 3 4 5; do
+            git fetch "$PUSH_URL" master
+            if ! git rebase FETCH_HEAD; then
+              git rebase --abort
+              echo "rebase onto remote master failed" >&2
+              exit 1
+            fi
+            if git push "$PUSH_URL" HEAD:master; then
+              echo "pushed fork page on attempt $attempt"
+              exit 0
+            fi
+            echo "push rejected (attempt $attempt) — remote advanced, retrying…"
+            sleep 5
+          done
+          echo "failed to push fork page after 5 attempts" >&2
+          exit 1
 
       # The initial app-token may have expired (bench takes ~2 h, token lasts 1 h).
       # Generate a fresh one just for the push.
