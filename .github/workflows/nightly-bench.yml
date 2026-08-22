@@ -26,6 +26,11 @@ on:
         description: 'infino repo to bench, e.g. a public fork (default: infino-ai/infino)'
         default: 'infino-ai/infino'
         required: false
+      same_box:
+        description: 'Same-box A/B: also bench a main-infino baseline + lucene/tantivy on the one instance (branch/fork runs). Default off.'
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   id-token: write   # required for AWS OIDC
@@ -39,6 +44,7 @@ jobs:
       CORPUS_BUCKET: sbg-bench-corpus
       INFINO_BRANCH: ${{ inputs.infino_branch || 'main' }}
       INFINO_REPO: ${{ inputs.infino_repo || 'infino-ai/infino' }}
+      SAME_BOX: ${{ inputs.same_box && 'true' || 'false' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -99,6 +105,7 @@ jobs:
             -e "s|__INFINO_BRANCH__|${INFINO_BRANCH}|g" \
             -e "s|__INFINO_REPO__|${INFINO_REPO}|g" \
             -e "s|__SBG_BRANCH__|${{ github.ref_name }}|g" \
+            -e "s|__SAME_BOX__|${SAME_BOX}|g" \
             scripts/user-data-template.sh > /tmp/user-data.sh
           echo "b64=$(base64 -w0 /tmp/user-data.sh)" >> "$GITHUB_OUTPUT"
 
@@ -209,6 +216,13 @@ jobs:
             --template    web/build/full/index.html \
             --out-dir     "web/build/${FORK_USER}/full" \
             --label       "${INFINO_REPO}@${INFINO_BRANCH}"
+          # Same-box run: also publish the raw multi-engine results (infino-0.1 +
+          # infino-main + lucene/tantivy, all benched on one instance) so
+          # branch-vs-main / branch-vs-lucene are fetchable and variance-free.
+          if [ "$SAME_BOX" = "true" ]; then
+            cp "results-full-branch-${RUN_SLUG}.json" \
+              "web/build/${FORK_USER}/full/samebox-results.json"
+          fi
 
       # Fresh token scoped to the SBG repo for the page push (the app-token from
       # launch has likely expired after the ~2 h bench).

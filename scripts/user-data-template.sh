@@ -48,6 +48,12 @@ export TMPDIR="$HOME/tmp"
 INFINO_BRANCH="__INFINO_BRANCH__"
 INFINO_REPO="__INFINO_REPO__"
 SBG_BRANCH="__SBG_BRANCH__"
+# When "true", also build a `main` infino baseline (the `infino-main` engine) and
+# bench it + lucene/tantivy alongside the branch on THIS instance, so
+# branch-vs-main / branch-vs-lucene are free of cross-instance variance. Off by
+# default: branch/fork runs bench only infino-0.1 and compare to the committed
+# baseline (faster, but cross-instance).
+SAME_BOX="__SAME_BOX__"
 
 # Rust toolchain always needed (infino + tantivy; rust-toolchain.toml pins version)
 if ! command -v rustup &>/dev/null; then
@@ -57,8 +63,10 @@ source "$HOME/.cargo/env"
 # pre-install the pinned version so the first cargo build doesn't stall
 rustup toolchain install 1.95.0
 
-# JDK 21 only needed for lucene — skip on branch/fork runs (infino-0.1 only)
-if [ "$INFINO_BRANCH" = "main" ] && [ "$INFINO_REPO" = "infino-ai/infino" ]; then
+# JDK 21 only needed for lucene — benched on the official main nightly and on
+# same-box runs; skipped on ordinary branch/fork runs (infino-0.1 only).
+if { [ "$INFINO_BRANCH" = "main" ] && [ "$INFINO_REPO" = "infino-ai/infino" ]; } \
+  || [ "$SAME_BOX" = "true" ]; then
   if [ ! -d "$HOME/jdk-21.0.8+9" ]; then
     wget -q \
       "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.8%2B9/OpenJDK21U-jdk_x64_linux_hotspot_21.0.8_9.tar.gz" \
@@ -81,15 +89,28 @@ git clone "https://x-access-token:${GH_TOKEN}@github.com/infino-ai/search-benchm
 git -C "$HOME/infino" checkout "$INFINO_BRANCH"
 git -C "$HOME/search-benchmark-game" checkout "$SBG_BRANCH"
 
+# Same-box baseline: a second infino checkout on `main`, the path dep of the
+# `infino-main` engine (../../../infino-main). Benching it on THIS instance
+# cancels the cross-instance variance of branch-vs-committed comparisons.
+if [ "$SAME_BOX" = "true" ]; then
+  git clone "https://github.com/infino-ai/infino.git" "$HOME/infino-main"
+  git -C "$HOME/infino-main" checkout main
+fi
+
 cd "$HOME/search-benchmark-game"
 
 # corpus from S3
 aws s3 cp "s3://sbg-bench-corpus/corpus.json" corpus.json
 
-# only bench all engines for the official nightly (infino-ai/infino main).
-# fork runs and branch runs only bench infino-0.1 (~30 min saved).
+# Engine selection:
+#   - same-box run: branch (infino-0.1) + main baseline (infino-main) + lucene +
+#     tantivy, all on this instance;
+#   - official main nightly: the default full set (all engines);
+#   - ordinary branch/fork run: infino-0.1 only (~30 min saved).
 MAKE_ARGS=()
-if [ "$INFINO_BRANCH" != "main" ] || [ "$INFINO_REPO" != "infino-ai/infino" ]; then
+if [ "$SAME_BOX" = "true" ]; then
+  MAKE_ARGS+=(ENGINES="infino-0.1 infino-main tantivy-0.26 lucene-10.5.0")
+elif [ "$INFINO_BRANCH" != "main" ] || [ "$INFINO_REPO" != "infino-ai/infino" ]; then
   MAKE_ARGS+=(ENGINES=infino-0.1)
 fi
 
