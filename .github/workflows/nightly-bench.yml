@@ -27,9 +27,9 @@ on:
         default: 'infino-ai/infino'
         required: false
       same_box:
-        description: 'Same-box A/B: also bench a main-infino baseline + lucene/tantivy on the one instance (branch/fork runs). Default off.'
+        description: 'Same-box A/B: bench a main-infino baseline + lucene/tantivy alongside the branch on one instance (variance-free branch-vs-main / branch-vs-lucene). Default on. Does not apply to a main run — infino-0.1 is already main, so no separate baseline is built.'
         type: boolean
-        default: false
+        default: true
         required: false
 
 permissions:
@@ -44,6 +44,9 @@ jobs:
       CORPUS_BUCKET: sbg-bench-corpus
       INFINO_BRANCH: ${{ inputs.infino_branch || 'main' }}
       INFINO_REPO: ${{ inputs.infino_repo || 'infino-ai/infino' }}
+      # On by default (input default true); the nightly schedule has no inputs so
+      # this is 'false' there, and a main run skips the baseline regardless (see the
+      # IS_BRANCH_RUN guard in user-data).
       SAME_BOX: ${{ inputs.same_box && 'true' || 'false' }}
 
     steps:

@@ -50,10 +50,17 @@ INFINO_REPO="__INFINO_REPO__"
 SBG_BRANCH="__SBG_BRANCH__"
 # When "true", also build a `main` infino baseline (the `infino-main` engine) and
 # bench it + lucene/tantivy alongside the branch on THIS instance, so
-# branch-vs-main / branch-vs-lucene are free of cross-instance variance. Off by
-# default: branch/fork runs bench only infino-0.1 and compare to the committed
-# baseline (faster, but cross-instance).
+# branch-vs-main / branch-vs-lucene are free of cross-instance variance. On by
+# default (the workflow input); 'false' skips it for a fast infino-0.1-only run.
+# It has no effect on a main run — see IS_BRANCH_RUN below.
 SAME_BOX="__SAME_BOX__"
+
+# A branch/fork run is anything other than the official infino-ai/infino main.
+# For a main run infino-0.1 already *is* main, so no separate baseline is built.
+IS_BRANCH_RUN=false
+if [ "$INFINO_BRANCH" != "main" ] || [ "$INFINO_REPO" != "infino-ai/infino" ]; then
+  IS_BRANCH_RUN=true
+fi
 
 # Rust toolchain always needed (infino + tantivy; rust-toolchain.toml pins version)
 if ! command -v rustup &>/dev/null; then
@@ -91,8 +98,9 @@ git -C "$HOME/search-benchmark-game" checkout "$SBG_BRANCH"
 
 # Same-box baseline: a second infino checkout on `main`, the path dep of the
 # `infino-main` engine (../../../infino-main). Benching it on THIS instance
-# cancels the cross-instance variance of branch-vs-committed comparisons.
-if [ "$SAME_BOX" = "true" ]; then
+# cancels the cross-instance variance of branch-vs-committed comparisons. Only
+# for branch/fork runs — for a main run infino-0.1 already is the baseline.
+if [ "$SAME_BOX" = "true" ] && [ "$IS_BRANCH_RUN" = "true" ]; then
   git clone "https://github.com/infino-ai/infino.git" "$HOME/infino-main"
   git -C "$HOME/infino-main" checkout main
 fi
@@ -103,14 +111,14 @@ cd "$HOME/search-benchmark-game"
 aws s3 cp "s3://sbg-bench-corpus/corpus.json" corpus.json
 
 # Engine selection:
-#   - same-box run: branch (infino-0.1) + main baseline (infino-main) + lucene +
-#     tantivy, all on this instance;
-#   - official main nightly: the default full set (all engines);
-#   - ordinary branch/fork run: infino-0.1 only (~30 min saved).
+#   - same-box branch run (default): branch (infino-0.1) + main baseline
+#     (infino-main) + lucene + tantivy, all on this instance;
+#   - fast branch run (same_box=false): infino-0.1 only (~30 min saved);
+#   - official main nightly: the default full set (all engines, no baseline).
 MAKE_ARGS=()
-if [ "$SAME_BOX" = "true" ]; then
+if [ "$IS_BRANCH_RUN" = "true" ] && [ "$SAME_BOX" = "true" ]; then
   MAKE_ARGS+=(ENGINES="infino-0.1 infino-main tantivy-0.26 lucene-10.5.0")
-elif [ "$INFINO_BRANCH" != "main" ] || [ "$INFINO_REPO" != "infino-ai/infino" ]; then
+elif [ "$IS_BRANCH_RUN" = "true" ]; then
   MAKE_ARGS+=(ENGINES=infino-0.1)
 fi
 
