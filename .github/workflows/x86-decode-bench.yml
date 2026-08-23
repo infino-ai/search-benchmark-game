@@ -1,0 +1,37 @@
+name: x86 decode microbench
+
+# Runs infino's block256 decode benchmarks on a native x86_64 GitHub runner
+# (ubuntu-latest has AVX2), to measure the 256-doc codec's decode throughput
+# vs BitPacker8x (256) and BitPacker4x (128) — free of the c7i dispatch noise.
+on:
+  workflow_dispatch:
+    inputs:
+      infino_repo:
+        description: 'infino repo'
+        default: 'vinaykakade/infino'
+      infino_branch:
+        description: 'infino branch'
+        default: 'fts-256-blocks'
+
+jobs:
+  decode-bench:
+    runs-on: ubuntu-latest
+    steps:
+      - name: CPU / AVX2 check
+        run: |
+          lscpu | grep -iE "^model name|^flags" | head -2
+          echo "avx2 present: $(grep -om1 avx2 /proc/cpuinfo || echo no)"
+          echo "avx512 present: $(grep -om1 avx512f /proc/cpuinfo || echo no)"
+      - name: System deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq cmake clang libhdf5-dev pkg-config
+      - name: Clone infino
+        run: git clone --depth 1 --branch "${{ inputs.infino_branch }}" "https://github.com/${{ inputs.infino_repo }}.git" infino
+      - name: Rust toolchain
+        working-directory: infino
+        run: rustup show
+      - name: Decode benches (native x86, AVX2)
+        working-directory: infino
+        run: |
+          RUSTFLAGS="-C target-cpu=native" cargo test --release --lib \
+            'superfile::fts::block256::bitpack::bench::' -- --ignored --nocapture \
+            2>&1 | grep -vE "^\s+Compiling|^\s+Finished|^\s+Downloaded|Downloading" | tail -120
