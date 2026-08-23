@@ -1,9 +1,12 @@
 name: x86 decode microbench
 
 # Runs infino's block256 decode benchmarks on a native x86_64 GitHub runner
-# (ubuntu-latest has AVX2), to measure the 256-doc codec's decode throughput
-# vs BitPacker8x (256) and BitPacker4x (128) — free of the c7i dispatch noise.
+# (ubuntu-latest has AVX2), measuring the 256-doc codec's decode throughput vs
+# BitPacker8x (256) and BitPacker4x (128) — free of c7i dispatch noise. Runs on
+# push to this branch (and via manual dispatch).
 on:
+  push:
+    branches: [x86-decode-bench]
   workflow_dispatch:
     inputs:
       infino_repo:
@@ -16,6 +19,9 @@ on:
 jobs:
   decode-bench:
     runs-on: ubuntu-latest
+    env:
+      INFINO_REPO: ${{ inputs.infino_repo || 'vinaykakade/infino' }}
+      INFINO_BRANCH: ${{ inputs.infino_branch || 'fts-256-blocks' }}
     steps:
       - name: CPU / AVX2 check
         run: |
@@ -25,7 +31,7 @@ jobs:
       - name: System deps
         run: sudo apt-get update -qq && sudo apt-get install -y -qq cmake clang libhdf5-dev pkg-config
       - name: Clone infino
-        run: git clone --depth 1 --branch "${{ inputs.infino_branch }}" "https://github.com/${{ inputs.infino_repo }}.git" infino
+        run: git clone --depth 1 --branch "$INFINO_BRANCH" "https://github.com/${INFINO_REPO}.git" infino
       - name: Rust toolchain
         working-directory: infino
         run: rustup show
