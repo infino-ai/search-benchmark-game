@@ -2,11 +2,8 @@ name: x86 decode microbench
 
 # Runs infino's block256 decode benchmarks on a native x86_64 GitHub runner
 # (ubuntu-latest has AVX2), measuring the 256-doc codec's decode throughput vs
-# BitPacker8x (256) and BitPacker4x (128) — free of c7i dispatch noise. Runs on
-# push to this branch (and via manual dispatch).
+# BitPacker8x (256) and BitPacker4x (128) — free of c7i dispatch noise.
 on:
-  push:
-    branches: [x86-decode-bench]
   workflow_dispatch:
     inputs:
       infino_repo:
