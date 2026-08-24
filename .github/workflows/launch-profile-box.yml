@@ -1,0 +1,119 @@
+# Launch a LONG-LIVED, SSH-debuggable c7i profiling box (AVX2). It builds
+# do_query for both codecs + one index per codec ONCE and then stays up (NOT
+# terminated), so profiling can be re-run against the persisted indexes without
+# the ~1h index rebuild. Log in over SSH (no AWS creds needed) with the private
+# key whose public half you pass in; watch /var/log/setup.log until "SETUP
+# DONE". Remember to terminate it when finished (it keeps costing money).
+name: launch profile box
+on:
+  workflow_dispatch:
+    inputs:
+      infino_branch:
+        description: 'infino branch to build (256-block codec)'
+        default: 'main'
+      infino_repo:
+        description: 'infino repo (e.g. a public fork)'
+        default: 'infino-ai/infino'
+      ssh_pubkey:
+        description: 'ed25519/rsa public key line to authorize for ec2-user'
+        required: true
+      allowed_cidr:
+        description: 'CIDR allowed to SSH (tighten to your IP/32 if you can)'
+        default: '0.0.0.0/0'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  launch:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate GitHub App token
+        uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: infino-ai
+          repositories: "search-benchmark-game,infino"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::381491836522:role/sbg-ci
+          aws-region: us-east-1
+
+      - name: Resolve AMI + dedicated SSH security group
+        id: infra
+        run: |
+          AMI=$(aws ec2 describe-images --owners amazon \
+            --filters "Name=name,Values=al2023-ami-*-x86_64" "Name=state,Values=available" \
+            --query 'sort_by(Images, &CreationDate)[-1].ImageId' --output text)
+          echo "ami=$AMI" >> "$GITHUB_OUTPUT"
+          VPC=$(aws ec2 describe-vpcs --filters "Name=isDefault,Values=true" \
+            --query 'Vpcs[0].VpcId' --output text)
+          # Dedicated SG so we never open SSH on the default SG. Reuse if present.
+          SG=$(aws ec2 describe-security-groups \
+            --filters "Name=group-name,Values=vinay-fts-perf-ssh" "Name=vpc-id,Values=$VPC" \
+            --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null)
+          if [ "$SG" = "None" ] || [ -z "$SG" ]; then
+            SG=$(aws ec2 create-security-group --group-name vinay-fts-perf-ssh \
+              --description "SSH to the vinay-fts-perf profiling box" --vpc-id "$VPC" \
+              --query 'GroupId' --output text)
+          fi
+          aws ec2 authorize-security-group-ingress --group-id "$SG" \
+            --protocol tcp --port 22 --cidr "${{ inputs.allowed_cidr }}" 2>/dev/null || true
+          echo "sg=$SG" >> "$GITHUB_OUTPUT"
+
+      - name: Build user-data
+        id: userdata
+        run: |
+          KEY='${{ inputs.ssh_pubkey }}'
+          python3 - "$KEY" <<'PY' > /tmp/user-data.sh
+          import sys
+          key=sys.argv[1]
+          s=open('scripts/profile-box-user-data.sh').read()
+          s=s.replace('__SSH_PUBKEY__', key)
+          s=s.replace('__GH_TOKEN__', '${{ steps.app-token.outputs.token }}')
+          s=s.replace('__INFINO_BRANCH__', '${{ inputs.infino_branch }}')
+          s=s.replace('__INFINO_REPO__', '${{ inputs.infino_repo }}')
+          s=s.replace('__SBG_BRANCH__', '${{ github.ref_name }}')
+          sys.stdout.write(s)
+          PY
+          echo "b64=$(base64 -w0 /tmp/user-data.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Launch c7i.2xlarge (persistent)
+        id: ec2
+        run: |
+          ID=$(aws ec2 run-instances \
+            --image-id "${{ steps.infra.outputs.ami }}" \
+            --instance-type c7i.2xlarge \
+            --iam-instance-profile Name=sbg-bench-instance \
+            --security-group-ids "${{ steps.infra.outputs.sg }}" \
+            --user-data "${{ steps.userdata.outputs.b64 }}" \
+            --block-device-mappings \
+              '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":120,"VolumeType":"gp3"}}]' \
+            --tag-specifications \
+              'ResourceType=instance,Tags=[{Key=Name,Value=vinay-fts-perf}]' \
+            --query 'Instances[0].InstanceId' --output text)
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+          aws ec2 wait instance-running --instance-ids "$ID"
+          IP=$(aws ec2 describe-instances --instance-ids "$ID" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+          echo "ip=$IP" >> "$GITHUB_OUTPUT"
+
+      - name: Print connection info
+        run: |
+          {
+            echo "## vinay-fts-perf launched"
+            echo "- instance: \`${{ steps.ec2.outputs.id }}\`"
+            echo "- public IP: \`${{ steps.ec2.outputs.ip }}\`"
+            echo "- SSH: \`ssh -i <privkey> ec2-user@${{ steps.ec2.outputs.ip }}\`"
+            echo "- watch build: \`tail -f /var/log/setup.log\` (wait for SETUP DONE)"
+            echo "- NOT auto-terminated — run \`aws ec2 terminate-instances --instance-ids ${{ steps.ec2.outputs.id }}\` when done."
+          } | tee "$GITHUB_STEP_SUMMARY"
