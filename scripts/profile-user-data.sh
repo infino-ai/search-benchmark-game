@@ -78,7 +78,7 @@ aws s3 cp "s3://sbg-bench-corpus/corpus.json" corpus.json
 # release profile sets `-C lto -C codegen-units=1` and `-C strip=debuginfo`, so
 # `-g` only inflates peak LTO memory (it OOM-kills rustc on the 16 GB c7i) and
 # is stripped anyway. perf still symbolicates functions from the retained ELF
-# symbol table; call graphs come from Intel LBR (hardware), not DWARF.
+# symbol table (plain sampling, no call-graph — LBR/DWARF unavailable here).
 export RUSTFLAGS='-C target-cpu=native'
 ( cd "$SBG/engines/infino-0.1"  && cargo build --release --bin build_index --bin do_query )
 ( cd "$SBG/engines/infino-main" && cargo build --release --bin build_index --bin do_query )
@@ -87,40 +87,57 @@ export RUSTFLAGS='-C target-cpu=native'
 "$SBG/engines/infino-0.1/target/release/build_index"  "$SBG/idx256" < corpus.json
 "$SBG/engines/infino-main/target/release/build_index" "$SBG/idx128" < corpus.json
 
-# Real query set -> "TOP_100\t<query>" lines, repeated so each profiled run is
-# long enough (~40-60s) for stable counters.
+# Real query set, repeated so each profiled run is long enough that preload is a
+# small amortized fraction of the counters. Two modes: TOP_100 (ranked search)
+# and COUNT (pure posting-list decode, no scoring — isolates the decode cost
+# that the AVX2 instruction-count delta points at).
 python3 - <<'PY'
 import json
 qs=[json.loads(l)['query'] for l in open('queries-full.txt') if l.strip()]
-with open('/tmp/top100.txt','w') as f:
-    for _ in range(60):
-        for q in qs: f.write('TOP_100\t'+q+'\n')
+with open('/tmp/top100.txt','w') as f, open('/tmp/count.txt','w') as g:
+    for _ in range(200):
+        for q in qs:
+            f.write('TOP_100\t'+q+'\n')
+            g.write('COUNT\t'+q+'\n')
 PY
 
-profile_one() {  # $1=engine-dir  $2=index  $3=label
-  local dq="$SBG/engines/$1/target/release/do_query" idx="$2" lbl="$3"
+profile_one() {  # $1=engine-dir  $2=index  $3=label  $4=query-file
+  local dq="$SBG/engines/$1/target/release/do_query" idx="$2" lbl="$3" qf="$4"
   echo "############################################################"
   echo "### PROFILE $lbl  ($dq $idx)"
   echo "############################################################"
+  # Warm the page cache + branch predictors first (untimed); the query set is
+  # large (see the generator) so preload is a small, amortized fraction of the
+  # counters below — the delta is dominated by per-query work.
+  "$dq" "$idx" < "$qf" > /dev/null 2>&1 || true
   echo "===== perf stat ($lbl) ====="
-  perf stat -e cycles,instructions,cache-references,cache-misses,LLC-loads,LLC-load-misses,L1-dcache-loads,L1-dcache-load-misses \
-    -- "$dq" "$idx" < /tmp/top100.txt > /dev/null 2> "/tmp/perfstat_$lbl.txt" || true
+  # LLC-* are <not supported> on the virtualized c7i; drop them. Add branches /
+  # branch-misses — the ranked walk is branchy, so a mispredict gap would show.
+  perf stat -e cycles,instructions,L1-dcache-loads,L1-dcache-load-misses,branches,branch-misses \
+    -- "$dq" "$idx" < "$qf" > /dev/null 2> "/tmp/perfstat_$lbl.txt" || true
   cat "/tmp/perfstat_$lbl.txt"
   echo "===== perf record + report top functions ($lbl) ====="
-  perf record -F 999 --call-graph lbr -o "/tmp/perf_$lbl.data" \
-    -- "$dq" "$idx" < /tmp/top100.txt > /dev/null 2>&1 || true
-  perf report --stdio --no-children -i "/tmp/perf_$lbl.data" 2>/dev/null \
+  # Plain sampling (no call-graph): LBR is unsupported on the virtualized c7i and
+  # produced an empty report. Function-level self-time comes from the retained
+  # ELF symbol table (the release profile strips debuginfo but keeps symbols).
+  perf record -F 1999 -o "/tmp/perf_$lbl.data" \
+    -- "$dq" "$idx" < "$qf" > /dev/null 2>&1 || true
+  perf report --stdio --no-children --percent-limit 0.3 -i "/tmp/perf_$lbl.data" 2>/dev/null \
     | grep -vE "^#|^\s*$" | head -45 > "/tmp/perfreport_$lbl.txt" || true
   cat "/tmp/perfreport_$lbl.txt"
   aws s3 cp "/tmp/perfstat_$lbl.txt"   "s3://sbg-bench-corpus/profile-perfstat-$lbl.txt"   2>/dev/null || true
   aws s3 cp "/tmp/perfreport_$lbl.txt" "s3://sbg-bench-corpus/profile-perfreport-$lbl.txt" 2>/dev/null || true
 }
 
-# main first (baseline), then branch, then main again — adjacent runs, same
-# thermal state, so branch-vs-main counter deltas are trustworthy.
-profile_one infino-main main128a idx128
-profile_one infino-0.1  branch256 idx256
-profile_one infino-main main128b idx128
+# Each mode main-bracketed (main, branch, main) — adjacent runs on one instance,
+# so branch-vs-main counter deltas are trustworthy. TOP_100 is ranked search;
+# COUNT is pure posting-list decode (no scoring), which isolates the decode.
+profile_one infino-main main128_top100_a idx128 /tmp/top100.txt
+profile_one infino-0.1  branch256_top100  idx256 /tmp/top100.txt
+profile_one infino-main main128_top100_b idx128 /tmp/top100.txt
+profile_one infino-main main128_count_a  idx128 /tmp/count.txt
+profile_one infino-0.1  branch256_count   idx256 /tmp/count.txt
+profile_one infino-main main128_count_b  idx128 /tmp/count.txt
 PROF_EOF
 
 chmod +x /tmp/profile.sh

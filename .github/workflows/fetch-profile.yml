@@ -19,4 +19,4 @@ jobs:
         run: |
           echo "==================== profile-log.txt (perf sections) ===================="
           aws s3 cp "s3://sbg-bench-corpus/profile-log.txt" /tmp/plog.txt 2>/dev/null || echo "(no log)"
-          awk '/PROFILE (main|branch)|perf stat|perf record|perf report|cache-misses|LLC|L1-dcache|instructions|cycles|insn per|GHz|elapsed|Performance counter|not supported|command not found|No permission|Error|Overhead/' /tmp/plog.txt | tail -200
+          awk '/### PROFILE/{p=1} p' /tmp/plog.txt | tail -400
