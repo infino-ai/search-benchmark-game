@@ -94,8 +94,11 @@ export RUSTFLAGS='-C target-cpu=native'
 python3 - <<'PY'
 import json
 qs=[json.loads(l)['query'] for l in open('queries-full.txt') if l.strip()]
-modes={'TOP_10':('/tmp/top10.txt',150),'TOP_100':('/tmp/top100.txt',60),
-       'TOP_1000':('/tmp/top1000.txt',25),'COUNT':('/tmp/count.txt',300)}
+# Reps target only a few seconds of run time (enough for stable counters and a
+# few thousand perf samples) — small because each mode is profiled with several
+# do_query passes. A TOP_1000 query costs ~10x a COUNT, hence the spread.
+modes={'TOP_10':('/tmp/top10.txt',30),'TOP_100':('/tmp/top100.txt',12),
+       'TOP_1000':('/tmp/top1000.txt',4),'COUNT':('/tmp/count.txt',60)}
 for cmd,(path,reps) in modes.items():
     with open(path,'w') as f:
         for _ in range(reps):
@@ -109,8 +112,9 @@ profile_one() {  # $1=engine-dir  $2=index  $3=label  $4=query-file
   echo "############################################################"
   # Sanity: the index must open and produce output. A panic here (e.g. wrong
   # index path) would otherwise leave perf profiling the startup/crash path and
-  # silently report garbage — abort loudly instead.
-  if [ -z "$("$dq" "$idx" < "$qf" 2>/dev/null | head -1)" ]; then
+  # silently report garbage — abort loudly instead. One tiny query (not the full
+  # set) so the check is near-instant.
+  if [ -z "$(printf 'COUNT\tthe\n' | "$dq" "$idx" 2>/dev/null | head -1)" ]; then
     echo "ERROR: $dq $idx produced no output (index open failed / panicked)"
     exit 1
   fi

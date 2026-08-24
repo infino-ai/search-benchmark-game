@@ -1,10 +1,10 @@
 # AVX2 (c7i) query profiler. Builds do_query for both codecs — the branch
 # (256-doc blocks) and main (128-doc blocks) — indexes the real corpus with
-# each, and profiles do_query over the real TOP_100 query set with Linux perf:
-# hardware counters (IPC, cache / LLC / L1 misses) via `perf stat` and a flat
-# function profile via `perf record`. The counters answer, on real AVX2, why
-# 256-doc-block ranked search costs what it does vs 128 — the thing a Mac /
-# NEON sampler cannot measure.
+# each, and profiles do_query over the real query set in four modes (TOP_10 /
+# TOP_100 / TOP_1000 / COUNT) with Linux perf: hardware counters (IPC, L1 +
+# branch misses) via `perf stat` and a flat function profile via `perf record`,
+# plus a branch-vs-main comparison summary — real AVX2, the thing a Mac / NEON
+# sampler cannot measure.
 #
 # Fully isolated from nightly-bench: it signals completion via a distinct S3
 # key (profile-done.txt) and writes its own S3 result keys, so it can run
@@ -101,8 +101,8 @@ jobs:
           echo "id=$INSTANCE_ID" >> "$GITHUB_OUTPUT"
           echo "Launched instance: $INSTANCE_ID"
 
-      - name: Wait for profile to complete (3 h timeout)
-        timeout-minutes: 180
+      - name: Wait for profile to complete (4 h timeout)
+        timeout-minutes: 240
         run: |
           DONE="s3://${CORPUS_BUCKET}/profile-done-${{ github.run_id }}.txt"
           echo "Polling $DONE every 60s …"
