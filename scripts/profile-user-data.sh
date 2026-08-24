@@ -73,8 +73,12 @@ SBG="$HOME/search-benchmark-game"
 cd "$SBG"
 aws s3 cp "s3://sbg-bench-corpus/corpus.json" corpus.json
 
-# Build both engines' binaries with debug symbols so perf symbolicates.
-export RUSTFLAGS='-C target-cpu=native -g'
+# Match the nightly build flags exactly (production AVX2). No `-g`: the engine
+# release profile sets `-C lto -C codegen-units=1` and `-C strip=debuginfo`, so
+# `-g` only inflates peak LTO memory (it OOM-kills rustc on the 16 GB c7i) and
+# is stripped anyway. perf still symbolicates functions from the retained ELF
+# symbol table; call graphs come from Intel LBR (hardware), not DWARF.
+export RUSTFLAGS='-C target-cpu=native'
 ( cd "$SBG/engines/infino-0.1"  && cargo build --release --bin build_index --bin do_query )
 ( cd "$SBG/engines/infino-main" && cargo build --release --bin build_index --bin do_query )
 
@@ -102,9 +106,9 @@ profile_one() {  # $1=engine-dir  $2=index  $3=label
     -- "$dq" "$idx" < /tmp/top100.txt > /dev/null 2> "/tmp/perfstat_$lbl.txt" || true
   cat "/tmp/perfstat_$lbl.txt"
   echo "===== perf record + report top functions ($lbl) ====="
-  perf record -F 999 -g --call-graph dwarf -o "/tmp/perf_$lbl.data" \
+  perf record -F 999 --call-graph lbr -o "/tmp/perf_$lbl.data" \
     -- "$dq" "$idx" < /tmp/top100.txt > /dev/null 2>&1 || true
-  perf report --stdio -i "/tmp/perf_$lbl.data" 2>/dev/null \
+  perf report --stdio --no-children -i "/tmp/perf_$lbl.data" 2>/dev/null \
     | grep -vE "^#|^\s*$" | head -45 > "/tmp/perfreport_$lbl.txt" || true
   cat "/tmp/perfreport_$lbl.txt"
   aws s3 cp "/tmp/perfstat_$lbl.txt"   "s3://sbg-bench-corpus/profile-perfstat-$lbl.txt"   2>/dev/null || true
