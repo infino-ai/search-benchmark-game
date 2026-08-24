@@ -17,9 +17,6 @@ jobs:
           aws-region: us-east-1
       - name: Print perf outputs
         run: |
-          for f in perfstat-main128a perfstat-branch256 perfstat-main128b \
-                   perfreport-main128a perfreport-branch256 perfreport-main128b; do
-            echo "==================== profile-$f ===================="
-            aws s3 cp "s3://sbg-bench-corpus/profile-$f.txt" - 2>/dev/null || echo "(missing)"
-            echo
-          done
+          echo "==================== profile-log.txt (perf sections) ===================="
+          aws s3 cp "s3://sbg-bench-corpus/profile-log.txt" /tmp/plog.txt 2>/dev/null || echo "(no log)"
+          awk '/PROFILE (main|branch)|perf stat|perf record|perf report|cache-misses|LLC|L1-dcache|instructions|cycles|insn per|GHz|elapsed|Performance counter|not supported|command not found|No permission|Error|Overhead/' /tmp/plog.txt | tail -200
