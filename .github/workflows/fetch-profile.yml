@@ -1,0 +1,25 @@
+# One-off helper: print the c7i profiler's perf outputs (stored in S3 by
+# x86-profile) to the job log, so results are readable without local AWS creds.
+name: fetch profile results
+on:
+  workflow_dispatch:
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::381491836522:role/sbg-ci
+          aws-region: us-east-1
+      - name: Print perf outputs
+        run: |
+          for f in perfstat-main128a perfstat-branch256 perfstat-main128b \
+                   perfreport-main128a perfreport-branch256 perfreport-main128b; do
+            echo "==================== profile-$f ===================="
+            aws s3 cp "s3://sbg-bench-corpus/profile-$f.txt" - 2>/dev/null || echo "(missing)"
+            echo
+          done
