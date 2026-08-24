@@ -106,6 +106,13 @@ profile_one() {  # $1=engine-dir  $2=index  $3=label  $4=query-file
   echo "############################################################"
   echo "### PROFILE $lbl  ($dq $idx)"
   echo "############################################################"
+  # Sanity: the index must open and produce output. A panic here (e.g. wrong
+  # index path) would otherwise leave perf profiling the startup/crash path and
+  # silently report garbage — abort loudly instead.
+  if [ -z "$("$dq" "$idx" < "$qf" 2>/dev/null | head -1)" ]; then
+    echo "ERROR: $dq $idx produced no output (index open failed / panicked)"
+    exit 1
+  fi
   # Warm the page cache + branch predictors first (untimed); the query set is
   # large (see the generator) so preload is a small, amortized fraction of the
   # counters below — the delta is dominated by per-query work.
@@ -132,12 +139,12 @@ profile_one() {  # $1=engine-dir  $2=index  $3=label  $4=query-file
 # Each mode main-bracketed (main, branch, main) — adjacent runs on one instance,
 # so branch-vs-main counter deltas are trustworthy. TOP_100 is ranked search;
 # COUNT is pure posting-list decode (no scoring), which isolates the decode.
-profile_one infino-main main128_top100_a idx128 /tmp/top100.txt
-profile_one infino-0.1  branch256_top100  idx256 /tmp/top100.txt
-profile_one infino-main main128_top100_b idx128 /tmp/top100.txt
-profile_one infino-main main128_count_a  idx128 /tmp/count.txt
-profile_one infino-0.1  branch256_count   idx256 /tmp/count.txt
-profile_one infino-main main128_count_b  idx128 /tmp/count.txt
+profile_one infino-main "$SBG/idx128" main128_top100_a /tmp/top100.txt
+profile_one infino-0.1  "$SBG/idx256" branch256_top100  /tmp/top100.txt
+profile_one infino-main "$SBG/idx128" main128_top100_b /tmp/top100.txt
+profile_one infino-main "$SBG/idx128" main128_count_a  /tmp/count.txt
+profile_one infino-0.1  "$SBG/idx256" branch256_count   /tmp/count.txt
+profile_one infino-main "$SBG/idx128" main128_count_b  /tmp/count.txt
 PROF_EOF
 
 chmod +x /tmp/profile.sh
