@@ -6,8 +6,11 @@
 # 256-doc-block ranked search costs what it does vs 128 — the thing a Mac /
 # NEON sampler cannot measure.
 #
-# Fully isolated from nightly-bench: its own SSM signal (/sbg-profile/done) and
-# S3 keys, so it can run alongside a nightly/same-box bench without colliding.
+# Fully isolated from nightly-bench: it signals completion via a distinct S3
+# key (profile-done.txt) and writes its own S3 result keys, so it can run
+# alongside a nightly/same-box bench (which uses SSM /sbg-bench/done) without
+# colliding. S3, not SSM, because the sbg-ci role is scoped to /sbg-bench/* in
+# SSM but already has access to this bucket.
 name: x86 query profile
 
 on:

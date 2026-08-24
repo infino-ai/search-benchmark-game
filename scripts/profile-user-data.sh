@@ -1,7 +1,8 @@
 #!/bin/bash
 # EC2 bootstrap for an AVX2 (c7i) query PROFILE run. Independent of the nightly
-# bench: its own SSM done-signal (/sbg-profile/done) and S3 keys, so it can run
-# alongside a nightly/same-box bench without colliding.
+# bench: it signals completion via a distinct S3 key (profile-done.txt) and
+# writes its own S3 result keys, so it can run alongside a nightly/same-box
+# bench (which uses SSM /sbg-bench/done) without colliding.
 #
 # Builds do_query for BOTH codecs — the branch (256-doc blocks, path dep
 # ../../../infino) and main (128-doc blocks, ../../../infino-main) — builds an
