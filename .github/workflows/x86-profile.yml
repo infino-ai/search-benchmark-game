@@ -1,0 +1,144 @@
+# AVX2 (c7i) query profiler. Builds do_query for both codecs — the branch
+# (256-doc blocks) and main (128-doc blocks) — indexes the real corpus with
+# each, and profiles do_query over the real TOP_100 query set with Linux perf:
+# hardware counters (IPC, cache / LLC / L1 misses) via `perf stat` and a flat
+# function profile via `perf record`. The counters answer, on real AVX2, why
+# 256-doc-block ranked search costs what it does vs 128 — the thing a Mac /
+# NEON sampler cannot measure.
+#
+# Fully isolated from nightly-bench: its own SSM signal (/sbg-profile/done) and
+# S3 keys, so it can run alongside a nightly/same-box bench without colliding.
+name: x86 query profile
+
+on:
+  workflow_dispatch:
+    inputs:
+      infino_branch:
+        description: 'infino branch to profile (256-block codec), e.g. fts-256-blocks'
+        default: 'main'
+      infino_repo:
+        description: 'infino repo, e.g. a public fork'
+        default: 'infino-ai/infino'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  profile:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-1
+      CORPUS_BUCKET: sbg-bench-corpus
+      INFINO_BRANCH: ${{ inputs.infino_branch || 'main' }}
+      INFINO_REPO: ${{ inputs.infino_repo || 'infino-ai/infino' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate GitHub App token
+        uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: infino-ai
+          repositories: "search-benchmark-game,infino"
+
+      - name: Configure AWS credentials (OIDC — no stored keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::381491836522:role/sbg-ci
+          aws-region: us-east-1
+          role-duration-seconds: 14400
+
+      - name: Clear stale done-signal
+        run: aws ssm delete-parameter --name /sbg-profile/done --region us-east-1 2>/dev/null || true
+
+      - name: Resolve latest AL2023 AMI and default security group
+        id: infra
+        run: |
+          AMI=$(aws ec2 describe-images --owners amazon \
+            --filters "Name=name,Values=al2023-ami-*-x86_64" "Name=state,Values=available" \
+            --query 'sort_by(Images, &CreationDate)[-1].ImageId' --output text)
+          echo "ami=$AMI" >> "$GITHUB_OUTPUT"
+          VPC=$(aws ec2 describe-vpcs --filters "Name=isDefault,Values=true" \
+            --query 'Vpcs[0].VpcId' --output text)
+          SG=$(aws ec2 describe-security-groups \
+            --filters "Name=vpc-id,Values=$VPC" "Name=group-name,Values=default" \
+            --query 'SecurityGroups[0].GroupId' --output text)
+          echo "sg=$SG" >> "$GITHUB_OUTPUT"
+
+      - name: Build user-data
+        id: userdata
+        run: |
+          sed \
+            -e "s|__GH_TOKEN__|${{ steps.app-token.outputs.token }}|g" \
+            -e "s|__INFINO_BRANCH__|${INFINO_BRANCH}|g" \
+            -e "s|__INFINO_REPO__|${INFINO_REPO}|g" \
+            -e "s|__SBG_BRANCH__|${{ github.ref_name }}|g" \
+            scripts/profile-user-data.sh > /tmp/user-data.sh
+          echo "b64=$(base64 -w0 /tmp/user-data.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Launch c7i.2xlarge profile instance
+        id: ec2
+        run: |
+          INSTANCE_ID=$(aws ec2 run-instances \
+            --image-id "${{ steps.infra.outputs.ami }}" \
+            --instance-type c7i.2xlarge \
+            --iam-instance-profile Name=sbg-bench-instance \
+            --security-group-ids "${{ steps.infra.outputs.sg }}" \
+            --user-data "${{ steps.userdata.outputs.b64 }}" \
+            --block-device-mappings \
+              '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":120,"VolumeType":"gp3"}}]' \
+            --tag-specifications \
+              'ResourceType=instance,Tags=[{Key=Name,Value=sbg-x86-profile}]' \
+            --query 'Instances[0].InstanceId' --output text)
+          echo "id=$INSTANCE_ID" >> "$GITHUB_OUTPUT"
+          echo "Launched instance: $INSTANCE_ID"
+
+      - name: Wait for profile to complete (3 h timeout)
+        timeout-minutes: 180
+        run: |
+          echo "Polling /sbg-profile/done every 60s …"
+          while true; do
+            if OUT=$(aws ssm get-parameter --name /sbg-profile/done \
+                --query 'Parameter.Value' --output text 2>&1); then
+              STATUS="$OUT"
+            elif printf '%s' "$OUT" | grep -q "ParameterNotFound"; then
+              STATUS="pending"
+            else
+              echo "get-parameter failed:"; echo "$OUT"; exit 1
+            fi
+            echo "$(date -u +%H:%M:%S)  status=$STATUS"
+            [ "$STATUS" = "ok" ]    && break
+            [ "$STATUS" = "error" ] && { echo "Profile reported error on EC2."; exit 1; }
+            sleep 60
+          done
+
+      - name: Render profile results to job summary
+        if: always()
+        run: |
+          {
+            echo "## AVX2 c7i profile — ${INFINO_REPO}@${INFINO_BRANCH} (256) vs main (128)"
+            for lbl in main128a branch256 main128b; do
+              echo "### perf stat — $lbl"; echo '```'
+              aws s3 cp "s3://$CORPUS_BUCKET/profile-perfstat-$lbl.txt" - 2>/dev/null || echo "(missing)"
+              echo '```'
+              echo "### perf report (top functions) — $lbl"; echo '```'
+              aws s3 cp "s3://$CORPUS_BUCKET/profile-perfreport-$lbl.txt" - 2>/dev/null || echo "(missing)"
+              echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fetch EC2 log on failure
+        if: failure()
+        run: aws s3 cp "s3://$CORPUS_BUCKET/profile-log.txt" - 2>/dev/null || echo "no log"
+
+      - name: Delete SSM done-signal
+        if: always()
+        run: aws ssm delete-parameter --name /sbg-profile/done --region us-east-1 2>/dev/null || true
+
+      - name: Terminate EC2 instance
+        if: always() && steps.ec2.outputs.id != ''
+        run: aws ec2 terminate-instances --instance-ids "${{ steps.ec2.outputs.id }}"

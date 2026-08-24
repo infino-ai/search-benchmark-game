@@ -1,0 +1,121 @@
+#!/bin/bash
+# EC2 bootstrap for an AVX2 (c7i) query PROFILE run. Independent of the nightly
+# bench: its own SSM done-signal (/sbg-profile/done) and S3 keys, so it can run
+# alongside a nightly/same-box bench without colliding.
+#
+# Builds do_query for BOTH codecs — the branch (256-doc blocks, path dep
+# ../../../infino) and main (128-doc blocks, ../../../infino-main) — builds an
+# index with each, then profiles do_query over the real TOP_100 query set with
+# perf: hardware counters (cycles / IPC / cache + LLC + L1 misses) via `perf
+# stat`, and a flat function profile via `perf record` + `perf report`. The
+# counters are the point: they show whether 256-doc blocks are more
+# memory-bound (cache-miss-bound) than 128 on real AVX2 — the thing a Mac /
+# NEON `sample` run cannot measure.
+exec >> /var/log/sbg-profile.log 2>&1
+
+REGION="us-east-1"
+BUCKET="sbg-bench-corpus"
+DONE_PARAM="/sbg-profile/done"
+EC2_HOME="/home/ec2-user"
+
+signal_done() {
+  aws s3 cp /var/log/sbg-profile.log "s3://$BUCKET/profile-log.txt" \
+    --region "$REGION" 2>/dev/null || true
+  aws ssm put-parameter --name "$DONE_PARAM" --value "$1" \
+    --type String --overwrite --region "$REGION" 2>/dev/null || true
+}
+trap 'echo "=== disk usage at exit ==="; df -h; signal_done error' EXIT
+
+# system deps + perf (AL2023 ships perf in the `perf` package)
+dnf install -y git make gcc gcc-c++ cmake clang bzip2 python3 unzip wget perf
+
+# Allow non-root perf profiling of ec2-user's process.
+sysctl -w kernel.perf_event_paranoid=-1 || true
+sysctl -w kernel.kptr_restrict=0 || true
+
+mkdir -p /run/sbg
+printf '%s' '__GH_TOKEN__' > /run/sbg/gh-token
+chmod 644 /run/sbg/gh-token
+
+cat > /tmp/profile.sh << 'PROF_EOF'
+#!/bin/bash
+set -euo pipefail
+mkdir -p "$HOME/tmp"; export TMPDIR="$HOME/tmp"
+
+INFINO_BRANCH="__INFINO_BRANCH__"
+INFINO_REPO="__INFINO_REPO__"
+SBG_BRANCH="__SBG_BRANCH__"
+
+if ! command -v rustup &>/dev/null; then
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+fi
+source "$HOME/.cargo/env"
+rustup toolchain install 1.95.0
+
+GH_TOKEN=$(cat /run/sbg/gh-token)
+
+# branch (256) + main (128) checkouts — the two engines path-dep these.
+git clone "https://github.com/${INFINO_REPO}.git" "$HOME/infino"
+git -C "$HOME/infino" checkout "$INFINO_BRANCH"
+git clone "https://github.com/infino-ai/infino.git" "$HOME/infino-main"
+git -C "$HOME/infino-main" checkout main
+git clone "https://x-access-token:${GH_TOKEN}@github.com/infino-ai/search-benchmark-game.git" \
+  "$HOME/search-benchmark-game"
+git -C "$HOME/search-benchmark-game" checkout "$SBG_BRANCH"
+
+SBG="$HOME/search-benchmark-game"
+cd "$SBG"
+aws s3 cp "s3://sbg-bench-corpus/corpus.json" corpus.json
+
+# Build both engines' binaries with debug symbols so perf symbolicates.
+export RUSTFLAGS='-C target-cpu=native -g'
+( cd "$SBG/engines/infino-0.1"  && cargo build --release --bin build_index --bin do_query )
+( cd "$SBG/engines/infino-main" && cargo build --release --bin build_index --bin do_query )
+
+# Build one index per codec.
+"$SBG/engines/infino-0.1/target/release/build_index"  "$SBG/idx256" < corpus.json
+"$SBG/engines/infino-main/target/release/build_index" "$SBG/idx128" < corpus.json
+
+# Real query set -> "TOP_100\t<query>" lines, repeated so each profiled run is
+# long enough (~40-60s) for stable counters.
+python3 - <<'PY'
+import json
+qs=[json.loads(l)['query'] for l in open('queries-full.txt') if l.strip()]
+with open('/tmp/top100.txt','w') as f:
+    for _ in range(60):
+        for q in qs: f.write('TOP_100\t'+q+'\n')
+PY
+
+profile_one() {  # $1=engine-dir  $2=index  $3=label
+  local dq="$SBG/engines/$1/target/release/do_query" idx="$2" lbl="$3"
+  echo "############################################################"
+  echo "### PROFILE $lbl  ($dq $idx)"
+  echo "############################################################"
+  echo "===== perf stat ($lbl) ====="
+  perf stat -e cycles,instructions,cache-references,cache-misses,LLC-loads,LLC-load-misses,L1-dcache-loads,L1-dcache-load-misses \
+    -- "$dq" "$idx" < /tmp/top100.txt > /dev/null 2> "/tmp/perfstat_$lbl.txt" || true
+  cat "/tmp/perfstat_$lbl.txt"
+  echo "===== perf record + report top functions ($lbl) ====="
+  perf record -F 999 -g --call-graph dwarf -o "/tmp/perf_$lbl.data" \
+    -- "$dq" "$idx" < /tmp/top100.txt > /dev/null 2>&1 || true
+  perf report --stdio -i "/tmp/perf_$lbl.data" 2>/dev/null \
+    | grep -vE "^#|^\s*$" | head -45 > "/tmp/perfreport_$lbl.txt" || true
+  cat "/tmp/perfreport_$lbl.txt"
+  aws s3 cp "/tmp/perfstat_$lbl.txt"   "s3://sbg-bench-corpus/profile-perfstat-$lbl.txt"   2>/dev/null || true
+  aws s3 cp "/tmp/perfreport_$lbl.txt" "s3://sbg-bench-corpus/profile-perfreport-$lbl.txt" 2>/dev/null || true
+}
+
+# main first (baseline), then branch, then main again — adjacent runs, same
+# thermal state, so branch-vs-main counter deltas are trustworthy.
+profile_one infino-main main128a idx128
+profile_one infino-0.1  branch256 idx256
+profile_one infino-main main128b idx128
+PROF_EOF
+
+chmod +x /tmp/profile.sh
+if sudo -H -u ec2-user bash /tmp/profile.sh; then
+  trap - EXIT
+  signal_done ok
+else
+  exit 1
+fi
