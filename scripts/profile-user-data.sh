@@ -15,14 +15,19 @@ exec >> /var/log/sbg-profile.log 2>&1
 
 REGION="us-east-1"
 BUCKET="sbg-bench-corpus"
-DONE_PARAM="/sbg-profile/done"
+# Completion is signalled via an S3 object rather than SSM: the sbg-ci /
+# sbg-bench-instance roles are scoped to /sbg-bench/* in SSM, but both already
+# have S3 access to this bucket. A distinct key keeps it isolated from the
+# nightly/same-box bench (which uses SSM /sbg-bench/done), so this can run
+# concurrently with one.
+DONE_KEY="s3://$BUCKET/profile-done.txt"
 EC2_HOME="/home/ec2-user"
 
 signal_done() {
   aws s3 cp /var/log/sbg-profile.log "s3://$BUCKET/profile-log.txt" \
     --region "$REGION" 2>/dev/null || true
-  aws ssm put-parameter --name "$DONE_PARAM" --value "$1" \
-    --type String --overwrite --region "$REGION" 2>/dev/null || true
+  printf '%s' "$1" > /tmp/profile-done.txt
+  aws s3 cp /tmp/profile-done.txt "$DONE_KEY" --region "$REGION" 2>/dev/null || true
 }
 trap 'echo "=== disk usage at exit ==="; df -h; signal_done error' EXIT
 
