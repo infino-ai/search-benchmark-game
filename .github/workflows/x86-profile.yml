@@ -55,9 +55,9 @@ jobs:
           aws-region: us-east-1
           role-duration-seconds: 14400
 
-      - name: Clear stale done-signal
-        run: aws s3 rm "s3://${CORPUS_BUCKET}/profile-done.txt" --region us-east-1 2>/dev/null || true
-
+      # The done-signal key is unique per run (the roles lack s3:DeleteObject,
+      # so a fixed key can't be cleared and a prior run's value would be
+      # misread). No clear step needed.
       - name: Resolve latest AL2023 AMI and default security group
         id: infra
         run: |
@@ -80,6 +80,7 @@ jobs:
             -e "s|__INFINO_BRANCH__|${INFINO_BRANCH}|g" \
             -e "s|__INFINO_REPO__|${INFINO_REPO}|g" \
             -e "s|__SBG_BRANCH__|${{ github.ref_name }}|g" \
+            -e "s|__DONE_OBJ__|profile-done-${{ github.run_id }}.txt|g" \
             scripts/profile-user-data.sh > /tmp/user-data.sh
           echo "b64=$(base64 -w0 /tmp/user-data.sh)" >> "$GITHUB_OUTPUT"
 
@@ -103,9 +104,10 @@ jobs:
       - name: Wait for profile to complete (3 h timeout)
         timeout-minutes: 180
         run: |
-          echo "Polling s3://${CORPUS_BUCKET}/profile-done.txt every 60s …"
+          DONE="s3://${CORPUS_BUCKET}/profile-done-${{ github.run_id }}.txt"
+          echo "Polling $DONE every 60s …"
           while true; do
-            if OUT=$(aws s3 cp "s3://${CORPUS_BUCKET}/profile-done.txt" - 2>&1); then
+            if OUT=$(aws s3 cp "$DONE" - 2>&1); then
               STATUS="$OUT"
             elif printf '%s' "$OUT" | grep -qiE "NoSuchKey|Not Found|does not exist"; then
               STATUS="pending"
@@ -136,10 +138,6 @@ jobs:
       - name: Fetch EC2 log on failure
         if: failure()
         run: aws s3 cp "s3://$CORPUS_BUCKET/profile-log.txt" - 2>/dev/null || echo "no log"
-
-      - name: Clean up done-signal
-        if: always()
-        run: aws s3 rm "s3://${CORPUS_BUCKET}/profile-done.txt" --region us-east-1 2>/dev/null || true
 
       - name: Terminate EC2 instance
         if: always() && steps.ec2.outputs.id != ''

@@ -18,10 +18,11 @@ REGION="us-east-1"
 BUCKET="sbg-bench-corpus"
 # Completion is signalled via an S3 object rather than SSM: the sbg-ci /
 # sbg-bench-instance roles are scoped to /sbg-bench/* in SSM, but both already
-# have S3 access to this bucket. A distinct key keeps it isolated from the
-# nightly/same-box bench (which uses SSM /sbg-bench/done), so this can run
-# concurrently with one.
-DONE_KEY="s3://$BUCKET/profile-done.txt"
+# have S3 access to this bucket. The key is unique per run (run id substituted
+# by the workflow) so a prior failed run's signal can never be misread as this
+# run's — the roles lack s3:DeleteObject, so a fixed key cannot be cleared. This
+# also keeps it isolated from the nightly/same-box bench (SSM /sbg-bench/done).
+DONE_KEY="s3://$BUCKET/__DONE_OBJ__"
 EC2_HOME="/home/ec2-user"
 
 signal_done() {
