@@ -6,12 +6,11 @@
 #
 # Builds do_query for BOTH codecs — the branch (256-doc blocks, path dep
 # ../../../infino) and main (128-doc blocks, ../../../infino-main) — builds an
-# index with each, then profiles do_query over the real TOP_100 query set with
-# perf: hardware counters (cycles / IPC / cache + LLC + L1 misses) via `perf
-# stat`, and a flat function profile via `perf record` + `perf report`. The
-# counters are the point: they show whether 256-doc blocks are more
-# memory-bound (cache-miss-bound) than 128 on real AVX2 — the thing a Mac /
-# NEON `sample` run cannot measure.
+# index with each, then profiles do_query over the real query set in four modes
+# (TOP_10 / TOP_100 / TOP_1000 / COUNT) with perf: hardware counters (cycles,
+# IPC, L1 + branch misses) via `perf stat` and a flat function profile via
+# `perf record`, plus a branch-vs-main comparison summary. Real AVX2 counters —
+# the thing a Mac / NEON sampler cannot measure.
 exec >> /var/log/sbg-profile.log 2>&1
 
 REGION="us-east-1"
@@ -87,18 +86,20 @@ export RUSTFLAGS='-C target-cpu=native'
 "$SBG/engines/infino-0.1/target/release/build_index"  "$SBG/idx256" < corpus.json
 "$SBG/engines/infino-main/target/release/build_index" "$SBG/idx128" < corpus.json
 
-# Real query set, repeated so each profiled run is long enough that preload is a
-# small amortized fraction of the counters. Two modes: TOP_100 (ranked search)
-# and COUNT (pure posting-list decode, no scoring — isolates the decode cost
-# that the AVX2 instruction-count delta points at).
+# Real query set per command, repeated so each profiled run is long enough that
+# preload is a small amortized fraction of the counters (per-mode reps because a
+# TOP_1000 query costs ~10x a COUNT). Four modes: TOP_10 / TOP_100 / TOP_1000
+# (ranked search at each k) and COUNT (pure posting-list decode, no scoring —
+# isolates the decode cost the AVX2 instruction-count delta points at).
 python3 - <<'PY'
 import json
 qs=[json.loads(l)['query'] for l in open('queries-full.txt') if l.strip()]
-with open('/tmp/top100.txt','w') as f, open('/tmp/count.txt','w') as g:
-    for _ in range(200):
-        for q in qs:
-            f.write('TOP_100\t'+q+'\n')
-            g.write('COUNT\t'+q+'\n')
+modes={'TOP_10':('/tmp/top10.txt',150),'TOP_100':('/tmp/top100.txt',60),
+       'TOP_1000':('/tmp/top1000.txt',25),'COUNT':('/tmp/count.txt',300)}
+for cmd,(path,reps) in modes.items():
+    with open(path,'w') as f:
+        for _ in range(reps):
+            for q in qs: f.write(cmd+'\t'+q+'\n')
 PY
 
 profile_one() {  # $1=engine-dir  $2=index  $3=label  $4=query-file
@@ -136,15 +137,43 @@ profile_one() {  # $1=engine-dir  $2=index  $3=label  $4=query-file
   aws s3 cp "/tmp/perfreport_$lbl.txt" "s3://sbg-bench-corpus/profile-perfreport-$lbl.txt" 2>/dev/null || true
 }
 
-# Each mode main-bracketed (main, branch, main) — adjacent runs on one instance,
-# so branch-vs-main counter deltas are trustworthy. TOP_100 is ranked search;
-# COUNT is pure posting-list decode (no scoring), which isolates the decode.
-profile_one infino-main "$SBG/idx128" main128_top100_a /tmp/top100.txt
-profile_one infino-0.1  "$SBG/idx256" branch256_top100  /tmp/top100.txt
-profile_one infino-main "$SBG/idx128" main128_top100_b /tmp/top100.txt
-profile_one infino-main "$SBG/idx128" main128_count_a  /tmp/count.txt
-profile_one infino-0.1  "$SBG/idx256" branch256_count   /tmp/count.txt
-profile_one infino-main "$SBG/idx128" main128_count_b  /tmp/count.txt
+# main + branch per mode. Instruction / branch / load counts are deterministic
+# (same code + data), so one run per engine suffices for those; cycles/IPC carry
+# mild thermal noise but the modes run back-to-back on one instance.
+for m in top10 top100 top1000 count; do
+  profile_one infino-main "$SBG/idx128" "main128_$m" "/tmp/$m.txt"
+  profile_one infino-0.1  "$SBG/idx256" "branch256_$m" "/tmp/$m.txt"
+done
+
+# Compact branch-vs-main comparison from the perf-stat files, all four modes.
+python3 - <<'PY'
+import re
+def parse(lbl):
+    d={}
+    try: t=open(f"/tmp/perfstat_{lbl}.txt").read()
+    except FileNotFoundError: return d
+    for line in t.splitlines():
+        m=re.match(r'\s*([\d,]+)\s+([A-Za-z0-9_-]+)\s', line+' ')
+        if m: d[m.group(2)]=int(m.group(1).replace(',',''))
+        for pat,key in [(r'#\s+([\d.]+)\s+insn per cycle','ipc'),
+                        (r'([\d.]+)% of all L1-dcache','l1_miss_pct'),
+                        (r'([\d.]+)% of all branches','br_miss_pct')]:
+            mm=re.search(pat,line)
+            if mm: d[key]=float(mm.group(1))
+    return d
+rows=["instructions","cycles","ipc","L1-dcache-loads","l1_miss_pct","branches","branch-misses","br_miss_pct"]
+print("\n"+"="*66)
+print("COMPARISON SUMMARY  (branch=256-block, main=128-block; b/m ratio)")
+print("="*66)
+for mode in ["top10","top100","top1000","count"]:
+    m=parse(f"main128_{mode}"); b=parse(f"branch256_{mode}")
+    print(f"\n--- {mode.upper()} ---")
+    print(f"  {'metric':<20}{'main(128)':>16}{'branch(256)':>16}{'b/m':>8}")
+    for k in rows:
+        if k in m and k in b and m[k]:
+            print(f"  {k:<20}{m[k]:>16,.0f}{b[k]:>16,.0f}{b[k]/m[k]:>8.3f}")
+print("="*66)
+PY
 PROF_EOF
 
 chmod +x /tmp/profile.sh
