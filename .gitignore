@@ -11,6 +11,7 @@ engines/iresearch*/idx*/
 engines/iresearch*/.cache/
 engines/bluge-*/bin/
 engines/**/idx
+engines/infino-*/idx*
 engines/**/idx-reordered
 engines/**/build
 **/target
