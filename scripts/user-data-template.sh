@@ -22,8 +22,12 @@ signal_done() {
 
 trap 'echo "=== disk usage at exit ==="; df -h; signal_done error' EXIT
 
-# system deps (gradle needs unzip; bzip2 for corpus fallback)
-dnf install -y git make gcc gcc-c++ cmake clang bzip2 python3 unzip wget
+# system deps (gradle needs unzip; bzip2 for corpus fallback). docker is needed
+# by the iresearch (SereneDB) engine, whose build runs in a container (clang-21)
+# — see RUNNING.md and engines/iresearch-26.03.1/Makefile.
+dnf install -y git make gcc gcc-c++ cmake clang bzip2 python3 unzip wget docker
+usermod -aG docker ec2-user
+systemctl enable --now docker
 
 # write the GitHub token to tmpfs so bench.sh can read it for git clone
 mkdir -p /run/sbg
@@ -95,6 +99,17 @@ git clone "https://x-access-token:${GH_TOKEN}@github.com/infino-ai/search-benchm
 # check out the requested branches before compilation
 git -C "$HOME/infino" checkout "$INFINO_BRANCH"
 git -C "$HOME/search-benchmark-game" checkout "$SBG_BRANCH"
+
+# The iresearch (SereneDB) engine is only benched on the official main nightly
+# (it's in the Makefile default ENGINES, and branch/fork runs override ENGINES).
+# Its source is a public submodule pinned via an SSH URL; this box authenticates
+# over HTTPS, so rewrite git@ -> https and fetch it plus its nested third_party
+# recursively. Skipped on branch/fork runs to avoid the large checkout.
+if [ "$IS_BRANCH_RUN" = "false" ]; then
+  git config --global url."https://github.com/".insteadOf "git@github.com:"
+  git -C "$HOME/search-benchmark-game" submodule update --init --recursive \
+    engines/iresearch-26.03.1/serenedb
+fi
 
 # Same-box baseline: a second infino checkout on `main`, the path dep of the
 # `infino-main` engine (../../../infino-main). Benching it on THIS instance
