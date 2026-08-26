@@ -72,23 +72,27 @@ function headlineSummary(data) {
     }
   }
 
-  // ratio[engine][mode] relative to Lucene; geomean[engine] over available shapes.
+  // ratio[engine][mode] relative to Lucene; summary[engine] = arithmetic mean of
+  // the per-shape ratios over available shapes. Normalizing each shape to Lucene
+  // first, then averaging the ratios, weights every shape equally — so a single
+  // high-latency shape (e.g. Lucene's slow TOP_100_COUNT) can't dominate the way
+  // it would if we averaged raw latencies across shapes.
   const ratio = {};
-  const geomean = {};
+  const summary = {};
   for (const engine of engines) {
     ratio[engine] = {};
-    let logsum = 0;
+    let sum = 0;
     let n = 0;
     for (const mode of modes) {
       const base = luceneKey ? avg[luceneKey][mode] : undefined;
       const v = avg[engine][mode];
       const r = (v === undefined || !base) ? undefined : v / base;
       ratio[engine][mode] = r;
-      if (r !== undefined && r > 0) { logsum += Math.log(r); n += 1; }
+      if (r !== undefined) { sum += r; n += 1; }
     }
-    geomean[engine] = n === 0 ? undefined : Math.exp(logsum / n);
+    summary[engine] = n === 0 ? undefined : sum / n;
   }
-  return { engines, modes, avg, ratio, geomean, luceneKey };
+  return { engines, modes, avg, ratio, summary, luceneKey };
 }
 
 // Column order: infino first, Lucene second, everything else after in data order.
@@ -112,12 +116,12 @@ function ratioCell(r, isBase, extraCls, key) {
 function Headline({ data }) {
   const summary = headlineSummary(data);
   if (!summary) return null;
-  const { modes, ratio, geomean, luceneKey } = summary;
+  const { modes, ratio, summary: rowSummary, luceneKey } = summary;
   const engines = orderEngines(summary.engines);
   return (
     <div className="headline">
       <div className="headline-title">
-        Latency relative to Lucene = 1.00 <span className="headline-hint">(&gt;1 = slower; per shape, then geomean across shapes)</span>
+        Latency relative to Lucene = 1.00 <span className="headline-hint">(&gt;1 = slower; per shape, then mean across shapes)</span>
       </div>
       <table className="headline-table">
         <thead>
@@ -135,9 +139,9 @@ function Headline({ data }) {
               {engines.map(engine => ratioCell(ratio[engine][mode], engine === luceneKey, "", engine + "-" + mode))}
             </tr>
           ))}
-          <tr className="hl-geomean-row">
-            <td className="hl-engine">Geomean</td>
-            {engines.map(engine => ratioCell(geomean[engine], engine === luceneKey, "hl-geomean-cell", "g-" + engine))}
+          <tr className="hl-summary-row">
+            <td className="hl-engine">Mean</td>
+            {engines.map(engine => ratioCell(rowSummary[engine], engine === luceneKey, "", "s-" + engine))}
           </tr>
         </tbody>
       </table>

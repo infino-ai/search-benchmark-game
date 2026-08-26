@@ -7,7 +7,7 @@
 #headline-summary th{background:#382373;color:#fff;font-weight:bold;}
 #headline-summary th:first-child,#headline-summary td.hl-engine{text-align:left;}
 #headline-summary td.hl-engine{font-weight:bold;word-break:break-word;}
-#headline-summary .hl-geomean-row td{font-weight:bold;border-top:2px solid #382373;}
+#headline-summary .hl-summary-row td{font-weight:bold;border-top:2px solid #382373;}
 #headline-summary .hl-base{background:#ece9f5;}
 #headline-summary .hl-faster{background:#cddccd;}
 #headline-summary .hl-slower{background:#e0b8b8;}
@@ -42,18 +42,18 @@
     engines=ordered;
     var avg={};
     engines.forEach(function(e){avg[e]={}; modes.forEach(function(m){avg[e][m]=shapeAvg(data.results[m][e]);});});
-    // ratio[engine][mode] to lucene; accumulate geomean per engine.
-    var ratio={},geo={};
+    // ratio[engine][mode] to lucene; summary = arithmetic mean of per-shape ratios.
+    var ratio={},summ={};
     engines.forEach(function(engine){
-      ratio[engine]={}; var logsum=0,n=0;
+      ratio[engine]={}; var sum=0,n=0;
       modes.forEach(function(mode){
         var base=lucene?avg[lucene][mode]:undefined;
         var v=avg[engine][mode];
         var r=(v===undefined||!base)?undefined:v/base;
         ratio[engine][mode]=r;
-        if(r!==undefined&&r>0){logsum+=Math.log(r);n++;}
+        if(r!==undefined){sum+=r;n++;}
       });
-      geo[engine]=n===0?undefined:Math.exp(logsum/n);
+      summ[engine]=n===0?undefined:sum/n;
     });
     var head='<tr><th>Query shape</th>'+engines.map(function(e){return '<th>'+esc(e)+'</th>';}).join('')+'</tr>';
     var body=modes.map(function(mode){
@@ -63,10 +63,10 @@
       }).join('');
       return '<tr><td class="hl-engine">'+esc(mode)+'</td>'+cells+'</tr>';
     }).join('');
-    var geoRow='<tr class="hl-geomean-row"><td class="hl-engine">Geomean</td>'+engines.map(function(engine){
-      return '<td class="hl-cell '+ratioClass(geo[engine],engine===lucene)+'">'+fmt(geo[engine])+'</td>';
+    var summRow='<tr class="hl-summary-row"><td class="hl-engine">Mean</td>'+engines.map(function(engine){
+      return '<td class="hl-cell '+ratioClass(summ[engine],engine===lucene)+'">'+fmt(summ[engine])+'</td>';
     }).join('')+'</tr>';
-    el.innerHTML='<div class="hl-title">Latency relative to Lucene = 1.00 <span class="hl-hint">(&gt;1 = slower; per shape, then geomean across shapes)</span></div><table><thead>'+head+'</thead><tbody>'+body+geoRow+'</tbody></table>';
+    el.innerHTML='<div class="hl-title">Latency relative to Lucene = 1.00 <span class="hl-hint">(&gt;1 = slower; per shape, then mean across shapes)</span></div><table><thead>'+head+'</thead><tbody>'+body+summRow+'</tbody></table>';
   }
   function load(){ fetch('results.json').then(function(r){return r.json();}).then(render).catch(function(){}); }
   if(document.readyState!=='loading') load(); else document.addEventListener('DOMContentLoaded',load);
