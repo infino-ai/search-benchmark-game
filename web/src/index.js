@@ -42,6 +42,109 @@ function aggregate(query) {
   return res;
 }
 
+// Headline table: query shapes as rows, engines as columns. Each cell is that
+// shape's AVERAGE latency (mean of per-query best timings) expressed relative to
+// Lucene for the same shape (Lucene = 1.00, >1 = slower). The final row is the
+// geometric mean of each engine's per-shape ratios — outlier-resistant, so one
+// pathological shape (e.g. Lucene's slow TOP_100_COUNT) can't dominate the
+// summary the way a plain mean of latencies would. Computed over ALL queries
+// (no tag filter) so the headline is a fixed summary of the whole run.
+function headlineSummary(data) {
+  const modes = Object.keys(data.results);
+  if (modes.length === 0) return null;
+  const engines = Object.keys(data.results[modes[0]]);
+  const luceneKey = engines.find(e => e.toLowerCase().indexOf("lucene") >= 0);
+
+  // avg[engine][mode] = shape AVERAGE latency (undefined if any query unsupported).
+  const avg = {};
+  for (const engine of engines) {
+    avg[engine] = {};
+    for (const mode of modes) {
+      const queries = data.results[mode][engine];
+      if (!queries || queries.length === 0) { avg[engine][mode] = undefined; continue; }
+      let total = 0;
+      let unsupported = false;
+      for (const q of queries) {
+        if (!q.duration || q.duration.length === 0) { unsupported = true; break; }
+        total += q.duration[0]; // best timing — the value the AVERAGE row sums
+      }
+      avg[engine][mode] = unsupported ? undefined : total / queries.length;
+    }
+  }
+
+  // ratio[engine][mode] relative to Lucene; geomean[engine] over available shapes.
+  const ratio = {};
+  const geomean = {};
+  for (const engine of engines) {
+    ratio[engine] = {};
+    let logsum = 0;
+    let n = 0;
+    for (const mode of modes) {
+      const base = luceneKey ? avg[luceneKey][mode] : undefined;
+      const v = avg[engine][mode];
+      const r = (v === undefined || !base) ? undefined : v / base;
+      ratio[engine][mode] = r;
+      if (r !== undefined && r > 0) { logsum += Math.log(r); n += 1; }
+    }
+    geomean[engine] = n === 0 ? undefined : Math.exp(logsum / n);
+  }
+  return { engines, modes, avg, ratio, geomean, luceneKey };
+}
+
+// Column order: infino first, Lucene second, everything else after in data order.
+function orderEngines(engines) {
+  const lucene = engines.find(e => e.toLowerCase().indexOf("lucene") >= 0);
+  const infino = engines.find(e => e.toLowerCase().indexOf("infino") >= 0 && e.indexOf("@") < 0)
+    || engines.find(e => e.toLowerCase().indexOf("infino") >= 0);
+  const head = [];
+  if (infino) head.push(infino);
+  if (lucene && lucene !== infino) head.push(lucene);
+  return head.concat(engines.filter(e => e !== infino && e !== lucene));
+}
+
+function ratioCell(r, isBase, extraCls, key) {
+  let cls = "hl-cell" + (extraCls ? " " + extraCls : "");
+  if (isBase) cls += " hl-base";
+  else if (r !== undefined) cls += r > 1.005 ? " hl-slower" : (r < 0.995 ? " hl-faster" : "");
+  return <td className={cls} key={key}>{r === undefined ? "—" : r.toFixed(2)}</td>;
+}
+
+function Headline({ data }) {
+  const summary = headlineSummary(data);
+  if (!summary) return null;
+  const { modes, ratio, geomean, luceneKey } = summary;
+  const engines = orderEngines(summary.engines);
+  return (
+    <div className="headline">
+      <div className="headline-title">
+        Latency relative to Lucene = 1.00 <span className="headline-hint">(&gt;1 = slower; per shape, then geomean across shapes)</span>
+      </div>
+      <table className="headline-table">
+        <thead>
+          <tr>
+            <th>Query shape</th>
+            {engines.map(engine => (
+              <th key={"h-" + engine}>{engine}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {modes.map(mode => (
+            <tr key={"r-" + mode}>
+              <td className="hl-engine">{mode}</td>
+              {engines.map(engine => ratioCell(ratio[engine][mode], engine === luceneKey, "", engine + "-" + mode))}
+            </tr>
+          ))}
+          <tr className="hl-geomean-row">
+            <td className="hl-engine">Geomean</td>
+            {engines.map(engine => ratioCell(geomean[engine], engine === luceneKey, "hl-geomean-cell", "g-" + engine))}
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function stats_row(engines, name, className, stat) {
   return <tr className={className + "-row"}>
             <td>{name}</td>
@@ -191,6 +294,7 @@ class Benchmark extends React.Component {
   render() {
     var data_view = this.generateDataView();
     return <div>
+      <Headline data={this.props.data} />
       <form>
         <fieldset>
           <label htmlFor="collectionField">Collection type</label>

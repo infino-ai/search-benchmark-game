@@ -8,6 +8,67 @@ body {
   padding: 30px 10px;
 }
 
+.headline {
+  margin-bottom: 24px;
+}
+
+.headline-title {
+  font-size: 13px;
+  color: #444;
+  margin-bottom: 10px;
+}
+
+.headline-hint {
+  color: #717171;
+}
+
+.headline-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.headline-table th,
+.headline-table td {
+  border: solid 1px #ddd;
+  padding: 8px 10px;
+  text-align: right;
+  min-width: auto;
+  font-size: 13px;
+}
+
+.headline-table th {
+  background-color: #382373;
+  color: white;
+  font-weight: bold;
+}
+
+.headline-table th:first-child,
+.headline-table .hl-engine {
+  text-align: left;
+}
+
+.headline-table .hl-engine {
+  font-weight: bold;
+  word-break: break-word;
+}
+
+.headline-table .hl-geomean-row td {
+  font-weight: bold;
+  border-top: solid 2px #382373;
+}
+
+.headline-table .hl-base {
+  background-color: #ece9f5;
+}
+
+.headline-table .hl-faster {
+  background-color: #cddccd;
+}
+
+.headline-table .hl-slower {
+  background-color: #e0b8b8;
+}
+
 .fastest {
   background-color: #cddccd;
   color: #222;
