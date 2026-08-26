@@ -1,0 +1,17 @@
+# The Dockerfile builds a toolchain image whose only COPYs come from other build
+# stages (--from=docker-cli, --from=rust); it consumes NO files from the build
+# context. Exclude the heavy paths so `docker build <repo-root>` (used by the
+# iresearch/SereneDB engine) doesn't tar and ship the 8 GB corpus, the vendored
+# submodules, and every engine's build/index output to the daemon.
+.git
+corpus.json
+*.json
+results
+node_modules
+web
+target
+engines/*/build
+engines/*/build_debug
+engines/*/idx
+engines/*/target
+engines/*/serenedb
