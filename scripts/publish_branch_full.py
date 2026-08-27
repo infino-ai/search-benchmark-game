@@ -33,8 +33,44 @@ def branch_engine_key(label: str) -> str:
     return f"infino-0.1 @{branch}"
 
 
+def is_same_box(branch_full: dict) -> bool:
+    """True when the branch run re-benched the baseline engines alongside the
+    branch on one instance (the default same-box A/B). Its own results then
+    carry `infino-main` / `lucene` / `tantivy` columns from the *same* run, so
+    they are the variance-free comparison and must be used directly — splicing
+    the branch column into the committed baseline instead would compare it
+    against a different nightly on a different box (cross-run variance that
+    reads as a spurious regression on unchanged query classes)."""
+    for engines in branch_full.get("results", {}).values():
+        if any(k != "infino-0.1" for k in engines):
+            return True
+    return False
+
+
+def relabel_same_box(branch_full: dict, engine_key: str, label: str) -> dict:
+    """Same-box path: publish the branch run's own multi-engine results, with
+    its `infino-0.1` column (the branch build) relabeled `engine_key` so it is
+    self-identifying next to the same-run `infino-main` / lucene / tantivy."""
+    for engines in branch_full["results"].values():
+        if "infino-0.1" in engines:
+            engines[engine_key] = engines.pop("infino-0.1")
+    details = branch_full.setdefault("details", {})
+    details.pop("infino-0.1", None)
+    details[engine_key] = [
+        f"infino-0.1 built from {label} (this fork's latest branch run), benched "
+        f"on the same instance as the infino-main / lucene / tantivy columns "
+        f"here — so branch-vs-main is variance-free."
+    ]
+    return branch_full
+
+
 def merge(main_full: dict, branch_full: dict, engine_key: str, label: str) -> dict:
-    """Return main_full with the branch's infino column added as `engine_key`."""
+    """Return main_full with the branch's infino column added as `engine_key`.
+
+    Fallback for a branch-only run (same-box A/B off): the run produced no
+    same-instance baseline, so the branch column is compared against the
+    committed baseline. This is a *cross-run* comparison — unchanged query
+    classes can drift by the box-to-box delta between the two nightlies."""
     branch_results = branch_full["results"]
     for mode, engines in main_full["results"].items():
         branch_col = branch_results.get(mode, {}).get("infino-0.1")
@@ -44,7 +80,8 @@ def merge(main_full: dict, branch_full: dict, engine_key: str, label: str) -> di
             continue
         engines[engine_key] = branch_col
     main_full.setdefault("details", {})[engine_key] = [
-        f"infino-0.1 built from {label} (this fork's latest branch run)."
+        f"infino-0.1 built from {label} (this fork's latest branch run; compared "
+        f"against the committed baseline — cross-run, not same-box)."
     ]
     return main_full
 
@@ -79,11 +116,18 @@ def main() -> None:
     p.add_argument("--label", required=True)
     args = p.parse_args()
 
-    main_full = json.load(open(args.main_full))
     branch_full = json.load(open(args.branch_full))
     engine_key = branch_engine_key(args.label)
 
-    merged = merge(main_full, branch_full, engine_key, args.label)
+    if is_same_box(branch_full):
+        # The branch run re-benched all engines on one instance: use its own
+        # results so the page is a true same-box comparison.
+        merged = relabel_same_box(branch_full, engine_key, args.label)
+    else:
+        # Branch-only run: splice the lone infino column into the committed
+        # baseline (cross-run — see merge()'s docstring).
+        main_full = json.load(open(args.main_full))
+        merged = merge(main_full, branch_full, engine_key, args.label)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
