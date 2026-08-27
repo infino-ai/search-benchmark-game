@@ -15,7 +15,8 @@ This benchmark is both
 - **for library** developers to identify optimization opportunities by comparing
 their implementation to other implementations.
 
-Currently, the benchmark only includes Lucene and tantivy.
+Currently, the benchmark includes infino, tantivy, Lucene, and iresearch
+(plus turbopuffer's published numbers on the `/tpuf` page).
 It is reasonably simple to add another engine.
 
 You are free to communicate about the results of this benchmark **in
