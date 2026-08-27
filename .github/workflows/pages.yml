@@ -34,10 +34,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Stage results into the prebuilt site
         run: |
-          # tpuf comparison → root dashboard
-          [ -f results.json ]      && cp results.json      web/build/results.json      || echo "no results.json; using committed fallback"
-          # full 962-query benchmark → /full dashboard
-          [ -f results-full.json ] && cp results-full.json web/build/full/results.json || echo "no results-full.json; /full will be empty until first nightly run"
+          # full comparison → root dashboard
+          [ -f results-full.json ]      && cp results-full.json      web/build/results.json      || echo "no results-full.json; using committed fallback"
+          # tpuf comparison → /full dashboard
+          [ -f results.json ]      && cp results.json      web/build/full/results.json      || echo "no results.json; using committed fallback"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
