@@ -69,6 +69,49 @@ body {
   background-color: #e0b8b8;
 }
 
+.headline-table .hl-mean-cell {
+  padding: 4px 10px;
+}
+
+.hl-mean-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.hl-mean-item + .hl-mean-item {
+  border-top: solid 1px #e5e5e5;
+  margin-top: 3px;
+  padding-top: 3px;
+}
+
+.hl-mean-lbl {
+  font-size: 10px;
+  font-weight: normal;
+  color: #717171;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.hl-mean-num {
+  font-weight: bold;
+}
+
+.hl-mean-faster {
+  color: #2e7d32;
+}
+
+.hl-mean-slower {
+  color: #b23b3b;
+}
+
+.hl-mean-sublabel {
+  font-size: 10px;
+  font-weight: normal;
+  color: #717171;
+}
+
 .fastest {
   background-color: #cddccd;
   color: #222;

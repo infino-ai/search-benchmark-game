@@ -11,6 +11,14 @@
 #headline-summary .hl-base{background:#ece9f5;}
 #headline-summary .hl-faster{background:#cddccd;}
 #headline-summary .hl-slower{background:#e0b8b8;}
+#headline-summary .hl-mean-cell{padding:4px 10px;}
+#headline-summary .hl-mean-item{display:flex;justify-content:space-between;align-items:baseline;gap:12px;}
+#headline-summary .hl-mean-item+.hl-mean-item{border-top:1px solid #e5e5e5;margin-top:3px;padding-top:3px;}
+#headline-summary .hl-mean-lbl{font-size:10px;font-weight:normal;color:#717171;text-transform:uppercase;letter-spacing:.04em;}
+#headline-summary .hl-mean-num{font-weight:bold;}
+#headline-summary .hl-mean-faster{color:#2e7d32;}
+#headline-summary .hl-mean-slower{color:#b23b3b;}
+#headline-summary .hl-mean-sublabel{font-size:10px;font-weight:normal;color:#717171;}
 </style></head><body><noscript>You need to enable JavaScript to run this app.</noscript><div class="container"><div class="row"><div class="column"><h1>Search Benchmark, the Game</h1></div></div><div class="row"><div class="description column"></div><br/><br/></div></div><div class="row"><div class="column"><div id="headline-summary"></div></div></div><script id="headline-script">
 (function(){
   function esc(s){return (''+s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
@@ -25,7 +33,11 @@
     if(r===undefined) return '';
     return r>1.005?'hl-slower':(r<0.995?'hl-faster':'');
   }
-  function fmt(r){return r===undefined?'\u2014':r.toFixed(2);}
+  function meanNumClass(r,isBase){
+    if(isBase||r===undefined) return 'hl-mean-num';
+    return 'hl-mean-num '+(r>1.005?'hl-mean-slower':(r<0.995?'hl-mean-faster':''));
+  }
+  function fmt(r){return r===undefined?'—':r.toFixed(2);}
   function render(data){
     var el=document.getElementById('headline-summary');
     if(!el||!data||!data.results) return;
@@ -40,21 +52,32 @@
     if(lucene && lucene!==infino) ordered.push(lucene);
     engines.forEach(function(e){ if(e!==infino && e!==lucene) ordered.push(e); });
     engines=ordered;
+    // Split shapes into search (ranked top-k) and count families. Any shape whose
+    // name mentions COUNT (COUNT, TOP_*_COUNT) is a count command; the rest are
+    // search. The two means are reported separately because a count command
+    // stresses posting-list traversal while a top-k command stresses scoring —
+    // averaging them into one number hides which an engine is actually good at.
+    var isCount=function(m){return m.toUpperCase().indexOf('COUNT')>=0;};
+    var searchModes=modes.filter(function(m){return !isCount(m);});
+    var countModes=modes.filter(function(m){return isCount(m);});
     var avg={};
     engines.forEach(function(e){avg[e]={}; modes.forEach(function(m){avg[e][m]=shapeAvg(data.results[m][e]);});});
-    // ratio[engine][mode] to lucene; summary = arithmetic mean of per-shape ratios.
-    var ratio={},summ={};
+    // ratio[engine][mode] relative to lucene; each summary value is the arithmetic
+    // mean of the per-shape ratios within one family (every shape weighted equally).
+    var ratio={};
     engines.forEach(function(engine){
-      ratio[engine]={}; var sum=0,n=0;
+      ratio[engine]={};
       modes.forEach(function(mode){
         var base=lucene?avg[lucene][mode]:undefined;
         var v=avg[engine][mode];
-        var r=(v===undefined||!base)?undefined:v/base;
-        ratio[engine][mode]=r;
-        if(r!==undefined){sum+=r;n++;}
+        ratio[engine][mode]=(v===undefined||!base)?undefined:v/base;
       });
-      summ[engine]=n===0?undefined:sum/n;
     });
+    var meanOver=function(engine,subset){
+      var sum=0,n=0;
+      subset.forEach(function(mode){var r=ratio[engine][mode]; if(r!==undefined){sum+=r;n++;}});
+      return n===0?undefined:sum/n;
+    };
     var head='<tr><th>Query shape</th>'+engines.map(function(e){return '<th>'+esc(e)+'</th>';}).join('')+'</tr>';
     var body=modes.map(function(mode){
       var cells=engines.map(function(engine){
@@ -63,10 +86,15 @@
       }).join('');
       return '<tr><td class="hl-engine">'+esc(mode)+'</td>'+cells+'</tr>';
     }).join('');
-    var summRow='<tr class="hl-summary-row"><td class="hl-engine">Mean</td>'+engines.map(function(engine){
-      return '<td class="hl-cell '+ratioClass(summ[engine],engine===lucene)+'">'+fmt(summ[engine])+'</td>';
+    var summRow='<tr class="hl-summary-row"><td class="hl-engine">Mean<div class="hl-mean-sublabel">search / count</div></td>'+engines.map(function(engine){
+      var isBase=engine===lucene;
+      var rs=meanOver(engine,searchModes), rc=meanOver(engine,countModes);
+      return '<td class="hl-cell hl-mean-cell'+(isBase?' hl-base':'')+'">'
+        +'<div class="hl-mean-item"><span class="hl-mean-lbl">search</span><span class="'+meanNumClass(rs,isBase)+'">'+fmt(rs)+'</span></div>'
+        +'<div class="hl-mean-item"><span class="hl-mean-lbl">count</span><span class="'+meanNumClass(rc,isBase)+'">'+fmt(rc)+'</span></div>'
+        +'</td>';
     }).join('')+'</tr>';
-    el.innerHTML='<div class="hl-title">Latency relative to Lucene = 1.00 <span class="hl-hint">(&gt;1 = slower; per shape, then mean across shapes)</span></div><table><thead>'+head+'</thead><tbody>'+body+summRow+'</tbody></table>';
+    el.innerHTML='<div class="hl-title">Latency relative to Lucene = 1.00 <span class="hl-hint">(&gt;1 = slower; per shape, then mean split into search top-k and count)</span></div><table><thead>'+head+'</thead><tbody>'+body+summRow+'</tbody></table>';
   }
   function load(){ fetch('results.json').then(function(r){return r.json();}).then(render).catch(function(){}); }
   if(document.readyState!=='loading') load(); else document.addEventListener('DOMContentLoaded',load);

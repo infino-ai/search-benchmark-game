@@ -44,11 +44,12 @@ function aggregate(query) {
 
 // Headline table: query shapes as rows, engines as columns. Each cell is that
 // shape's AVERAGE latency (mean of per-query best timings) expressed relative to
-// Lucene for the same shape (Lucene = 1.00, >1 = slower). The final row is the
-// geometric mean of each engine's per-shape ratios — outlier-resistant, so one
-// pathological shape (e.g. Lucene's slow TOP_100_COUNT) can't dominate the
-// summary the way a plain mean of latencies would. Computed over ALL queries
-// (no tag filter) so the headline is a fixed summary of the whole run.
+// Lucene for the same shape (Lucene = 1.00, >1 = slower). The final "Mean" row
+// carries two values per engine — the arithmetic mean of the per-shape ratios
+// for the search (ranked top-k) shapes and, separately, for the count shapes —
+// so a count strength/weakness never hides behind search latency or vice versa.
+// Computed over ALL queries (no tag filter) so the headline is a fixed summary
+// of the whole run.
 function headlineSummary(data) {
   const modes = Object.keys(data.results);
   if (modes.length === 0) return null;
@@ -72,27 +73,41 @@ function headlineSummary(data) {
     }
   }
 
-  // ratio[engine][mode] relative to Lucene; summary[engine] = arithmetic mean of
-  // the per-shape ratios over available shapes. Normalizing each shape to Lucene
-  // first, then averaging the ratios, weights every shape equally — so a single
-  // high-latency shape (e.g. Lucene's slow TOP_100_COUNT) can't dominate the way
-  // it would if we averaged raw latencies across shapes.
+  // Split shapes into search (ranked top-k) and count families so the summary can
+  // report them separately: a count command stresses posting-list traversal, a
+  // top-k command stresses scoring, and one blended mean hides which an engine is
+  // good at. Any shape whose name mentions COUNT (COUNT, TOP_*_COUNT) is a count
+  // command; the rest are search.
+  const isCount = m => m.toUpperCase().indexOf("COUNT") >= 0;
+  const searchModes = modes.filter(m => !isCount(m));
+  const countModes = modes.filter(m => isCount(m));
+
+  // ratio[engine][mode] relative to Lucene. Each summary value is the arithmetic
+  // mean of the per-shape ratios within one family — normalizing each shape to
+  // Lucene first, then averaging, weights every shape equally so a single
+  // high-latency shape can't dominate.
   const ratio = {};
-  const summary = {};
+  const summarySearch = {};
+  const summaryCount = {};
+  const meanOver = (engine, subset) => {
+    let sum = 0, n = 0;
+    for (const mode of subset) {
+      const r = ratio[engine][mode];
+      if (r !== undefined) { sum += r; n += 1; }
+    }
+    return n === 0 ? undefined : sum / n;
+  };
   for (const engine of engines) {
     ratio[engine] = {};
-    let sum = 0;
-    let n = 0;
     for (const mode of modes) {
       const base = luceneKey ? avg[luceneKey][mode] : undefined;
       const v = avg[engine][mode];
-      const r = (v === undefined || !base) ? undefined : v / base;
-      ratio[engine][mode] = r;
-      if (r !== undefined) { sum += r; n += 1; }
+      ratio[engine][mode] = (v === undefined || !base) ? undefined : v / base;
     }
-    summary[engine] = n === 0 ? undefined : sum / n;
+    summarySearch[engine] = meanOver(engine, searchModes);
+    summaryCount[engine] = meanOver(engine, countModes);
   }
-  return { engines, modes, avg, ratio, summary, luceneKey };
+  return { engines, modes, searchModes, countModes, avg, ratio, summarySearch, summaryCount, luceneKey };
 }
 
 // Column order: infino first, Lucene second, everything else after in data order.
@@ -113,15 +128,31 @@ function ratioCell(r, isBase, extraCls, key) {
   return <td className={cls} key={key}>{r === undefined ? "—" : r.toFixed(2)}</td>;
 }
 
+function meanNumClass(r, isBase) {
+  if (isBase || r === undefined) return "hl-mean-num";
+  return "hl-mean-num " + (r > 1.005 ? "hl-mean-slower" : (r < 0.995 ? "hl-mean-faster" : ""));
+}
+
+// One Mean cell, two labeled values: the search top-k mean over the count mean.
+function meanCell(searchR, countR, isBase, key) {
+  const num = (r) => <span className={meanNumClass(r, isBase)}>{r === undefined ? "—" : r.toFixed(2)}</span>;
+  return (
+    <td className={"hl-cell hl-mean-cell" + (isBase ? " hl-base" : "")} key={key}>
+      <div className="hl-mean-item"><span className="hl-mean-lbl">search</span>{num(searchR)}</div>
+      <div className="hl-mean-item"><span className="hl-mean-lbl">count</span>{num(countR)}</div>
+    </td>
+  );
+}
+
 function Headline({ data }) {
   const summary = headlineSummary(data);
   if (!summary) return null;
-  const { modes, ratio, summary: rowSummary, luceneKey } = summary;
+  const { modes, ratio, summarySearch, summaryCount, luceneKey } = summary;
   const engines = orderEngines(summary.engines);
   return (
     <div className="headline">
       <div className="headline-title">
-        Latency relative to Lucene = 1.00 <span className="headline-hint">(&gt;1 = slower; per shape, then mean across shapes)</span>
+        Latency relative to Lucene = 1.00 <span className="headline-hint">(&gt;1 = slower; per shape, then mean split into search top-k and count)</span>
       </div>
       <table className="headline-table">
         <thead>
@@ -140,8 +171,8 @@ function Headline({ data }) {
             </tr>
           ))}
           <tr className="hl-summary-row">
-            <td className="hl-engine">Mean</td>
-            {engines.map(engine => ratioCell(rowSummary[engine], engine === luceneKey, "", "s-" + engine))}
+            <td className="hl-engine">Mean<div className="hl-mean-sublabel">search / count</div></td>
+            {engines.map(engine => meanCell(summarySearch[engine], summaryCount[engine], engine === luceneKey, "s-" + engine))}
           </tr>
         </tbody>
       </table>
