@@ -89,7 +89,10 @@ def compare(baseline_path, experiment_path, label):
         lines.append("### Index size\n")
         lines.append("| engine | main | branch | Δ% |")
         lines.append("|---|---:|---:|---:|")
-        for engine in sorted(set(b_sizes) | set(e_sizes)):
+        # Preserve the ENGINES / results.json order (branch first, then any
+        # baseline-only engine) so this matches the latency ordering rather
+        # than alphabetizing.
+        for engine in dict.fromkeys(list(e_sizes) + list(b_sizes)):
             b = b_sizes.get(engine)
             e = e_sizes.get(engine)
             if b and e:
