@@ -12,6 +12,15 @@ function formatPercentVariation(p) {
   }
 }
 
+function formatBytes(n) {
+  if (n === undefined || n === null) return "—";
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let i = 0;
+  let v = n;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
+  return (i === 0 ? v.toFixed(0) : v.toFixed(2)) + " " + units[i];
+}
+
 function numberWithCommas(x) {
   x = x.toString();
   let pattern = /(-?\d+)(\d{3})/
@@ -180,6 +189,60 @@ function Headline({ data }) {
   );
 }
 
+// On-disk index size per engine, sourced from data.index_sizes (a map
+// engine -> bytes recorded at build time). Engines are columns in the same
+// order as the headline; two rows — absolute size and size relative to
+// Lucene (Lucene = 1.00, >1 = larger). Renders nothing for runs whose
+// results.json predates index-size recording.
+function IndexSize({ data }) {
+  const sizes = data.index_sizes;
+  if (!sizes || Object.keys(sizes).length === 0) return null;
+  const present = Object.keys(sizes).filter(e => sizes[e] !== undefined && sizes[e] !== null);
+  if (present.length === 0) return null;
+  const engines = orderEngines(present);
+  const luceneKey = engines.find(e => e.toLowerCase().indexOf("lucene") >= 0);
+  const base = luceneKey ? sizes[luceneKey] : undefined;
+  const ratioClass = (r) => r > 1.005 ? "hl-slower" : (r < 0.995 ? "hl-faster" : "");
+  return (
+    <div className="headline">
+      <div className="headline-title">
+        Index size on disk{luceneKey ? <span className="headline-hint"> (and relative to Lucene = 1.00; &gt;1 = larger)</span> : null}
+      </div>
+      <table className="headline-table">
+        <thead>
+          <tr>
+            <th>Metric</th>
+            {engines.map(engine => <th key={"is-h-" + engine}>{engine}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td className="hl-engine">Size</td>
+            {engines.map(engine => (
+              <td className={"hl-cell" + (engine === luceneKey ? " hl-base" : "")} key={"is-s-" + engine}>
+                {formatBytes(sizes[engine])}
+              </td>
+            ))}
+          </tr>
+          {base ? (
+            <tr>
+              <td className="hl-engine">vs Lucene</td>
+              {engines.map(engine => {
+                const r = sizes[engine] / base;
+                const isBase = engine === luceneKey;
+                let cls = "hl-cell";
+                if (isBase) cls += " hl-base";
+                else cls += " " + ratioClass(r);
+                return <td className={cls} key={"is-r-" + engine}>{r.toFixed(2)}</td>;
+              })}
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function stats_row(engines, name, className, stat) {
   return <tr className={className + "-row"}>
             <td>{name}</td>
@@ -330,6 +393,7 @@ class Benchmark extends React.Component {
     var data_view = this.generateDataView();
     return <div>
       <Headline data={this.props.data} />
+      <IndexSize data={this.props.data} />
       <form>
         <fieldset>
           <label htmlFor="collectionField">Collection type</label>

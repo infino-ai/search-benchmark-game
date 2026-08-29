@@ -19,6 +19,20 @@ def median(durations):
     return s[len(s) // 2]
 
 
+def fmt_bytes(n):
+    if n is None:
+        return "n/a"
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if abs(n) < 1024 or unit == "TiB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.2f} {unit}"
+        n /= 1024.0
+
+
+def load_index_sizes(path):
+    with open(path) as f:
+        return json.load(f).get("index_sizes", {}) or {}
+
+
 def load_infino(path):
     with open(path) as f:
         data = json.load(f)
@@ -67,6 +81,26 @@ def compare(baseline_path, experiment_path, label):
         lines.append("|---|---:|---:|---:|")
         for query, b_us, e_us, pct, sign, flag in sorted(rows, key=lambda r: r[3]):
             lines.append(f"| `{query}` | {b_us} | {e_us} | {sign}{pct:.1f}%{flag} |")
+        lines.append("")
+
+    b_sizes = load_index_sizes(baseline_path)
+    e_sizes = load_index_sizes(experiment_path)
+    if b_sizes or e_sizes:
+        lines.append("### Index size\n")
+        lines.append("| engine | main | branch | Δ% |")
+        lines.append("|---|---:|---:|---:|")
+        # Preserve the ENGINES / results.json order (branch first, then any
+        # baseline-only engine) so this matches the latency ordering rather
+        # than alphabetizing.
+        for engine in dict.fromkeys(list(e_sizes) + list(b_sizes)):
+            b = b_sizes.get(engine)
+            e = e_sizes.get(engine)
+            if b and e:
+                pct = (e / b - 1) * 100
+                delta = f"{'+' if pct > 0 else ''}{pct:.2f}%"
+            else:
+                delta = "—"
+            lines.append(f"| {engine} | {fmt_bytes(b)} | {fmt_bytes(e)} | {delta} |")
         lines.append("")
 
     if all_ratios:

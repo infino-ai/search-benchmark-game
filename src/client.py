@@ -75,6 +75,23 @@ def printProgressBar (progress, prefix = '', suffix = '', decimals = 1, length =
     if progress >= 1:
         print()
 
+def index_size_bytes(idx_path):
+    """Total on-disk bytes of an engine's built index. Resolves the
+    `idx` symlink (some engines point it at an index dir elsewhere) and
+    sums every file under it. Returns None when the dir is absent."""
+    root = os.path.realpath(idx_path)
+    if not os.path.isdir(root):
+        return None
+    total = 0
+    for dirpath, _dirs, files in os.walk(root):
+        for fn in files:
+            try:
+                total += os.path.getsize(os.path.join(dirpath, fn))
+            except OSError:
+                pass
+    return total
+
+
 WARMUP_TIME = int(os.environ.get('WARMUP_TIME', '60'))
 NUM_ITER = int(os.environ.get('NUM_ITER', '10'))
 
@@ -96,6 +113,13 @@ if __name__ == "__main__":
           details[engine] = json.loads(f.read())
       else:
         details[engine] = []
+
+    # Record each engine's built-index size so the comparison table can
+    # show the storage cost alongside latency. Indexing runs before the
+    # bench, so `engines/<engine>/idx` exists here.
+    index_sizes = {}
+    for engine in engines:
+      index_sizes[engine] = index_size_bytes(path.join(dirname, engine, "idx"))
 
     results = {}
     for command in COMMANDS:
@@ -143,4 +167,4 @@ if __name__ == "__main__":
         print(results_commands.keys())
         results[command] = results_commands
     with open("results.json" , "w") as f:
-        json.dump({ "details": details, "results": results }, f, default=lambda obj: obj.__dict__)
+        json.dump({ "details": details, "index_sizes": index_sizes, "results": results }, f, default=lambda obj: obj.__dict__)
