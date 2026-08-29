@@ -19,6 +19,18 @@
 #headline-summary .hl-mean-faster{color:#2e7d32;}
 #headline-summary .hl-mean-slower{color:#b23b3b;}
 #headline-summary .hl-mean-sublabel{font-size:10px;font-weight:normal;color:#717171;}
+</style><style id="indexsize-style">
+#indexsize-summary{margin:0 0 24px 0;}
+#indexsize-summary .hl-title{font-size:13px;color:#444;margin-bottom:10px;}
+#indexsize-summary .hl-hint{color:#717171;}
+#indexsize-summary table{border-collapse:collapse;width:100%;}
+#indexsize-summary th,#indexsize-summary td{border:1px solid #ddd;padding:8px 10px;text-align:right;font-size:13px;}
+#indexsize-summary th{background:#382373;color:#fff;font-weight:bold;}
+#indexsize-summary th:first-child,#indexsize-summary td.hl-engine{text-align:left;}
+#indexsize-summary td.hl-engine{font-weight:bold;word-break:break-word;}
+#indexsize-summary .hl-base{background:#ece9f5;}
+#indexsize-summary .hl-faster{background:#cddccd;}
+#indexsize-summary .hl-slower{background:#e0b8b8;}
 </style></head><body><noscript>You need to enable JavaScript to run this app.</noscript><div class="container"><div class="row"><div class="column"><h1>Search Benchmark, the Game</h1></div></div><div class="row"><div class="description column"></div><br/><br/></div></div><div class="row"><div class="column"><div id="headline-summary"></div></div></div><script id="headline-script">
 (function(){
   function esc(s){return (''+s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
@@ -95,6 +107,49 @@
         +'</td>';
     }).join('')+'</tr>';
     el.innerHTML='<div class="hl-title">Latency relative to Lucene = 1.00 <span class="hl-hint">(&gt;1 = slower; per shape, then mean split into search top-k and count)</span></div><table><thead>'+head+'</thead><tbody>'+body+summRow+'</tbody></table>';
+  }
+  function load(){ fetch('results.json').then(function(r){return r.json();}).then(render).catch(function(){}); }
+  if(document.readyState!=='loading') load(); else document.addEventListener('DOMContentLoaded',load);
+})();
+</script><div class="row"><div class="column"><div id="indexsize-summary"></div></div></div><script id="indexsize-script">
+(function(){
+  function esc(s){return (''+s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
+  function fmtBytes(n){
+    if(n===undefined||n===null) return '\u2014';
+    var u=['B','KiB','MiB','GiB','TiB'],i=0,v=n;
+    while(v>=1024&&i<u.length-1){v/=1024;i++;}
+    return (i===0?v.toFixed(0):v.toFixed(2))+' '+u[i];
+  }
+  function sizeClass(r,isBase){ if(isBase) return 'hl-base'; if(r>1.005) return 'hl-slower'; if(r<0.995) return 'hl-faster'; return ''; }
+  function render(data){
+    var el=document.getElementById('indexsize-summary');
+    if(!el||!data) return;
+    var sizes=data.index_sizes;
+    if(!sizes){ el.style.display='none'; return; }
+    var engines=Object.keys(sizes).filter(function(e){return sizes[e]!==undefined && sizes[e]!==null;});
+    if(!engines.length){ el.style.display='none'; return; }
+    var lucene=engines.filter(function(e){return e.toLowerCase().indexOf('lucene')>=0;})[0];
+    var infino=engines.filter(function(e){return e.toLowerCase().indexOf('infino')>=0 && e.indexOf('@')<0;})[0]
+      || engines.filter(function(e){return e.toLowerCase().indexOf('infino')>=0;})[0];
+    var ordered=[];
+    if(infino) ordered.push(infino);
+    if(lucene && lucene!==infino) ordered.push(lucene);
+    engines.forEach(function(e){ if(e!==infino && e!==lucene) ordered.push(e); });
+    engines=ordered;
+    var base=lucene?sizes[lucene]:undefined;
+    var head='<tr><th>Metric</th>'+engines.map(function(e){return '<th>'+esc(e)+'</th>';}).join('')+'</tr>';
+    var sizeRow='<tr><td class="hl-engine">Size</td>'+engines.map(function(e){
+      return '<td class="hl-cell'+(e===lucene?' hl-base':'')+'">'+fmtBytes(sizes[e])+'</td>';
+    }).join('')+'</tr>';
+    var ratioRow='';
+    if(base){
+      ratioRow='<tr><td class="hl-engine">vs Lucene</td>'+engines.map(function(e){
+        var r=sizes[e]/base, isBase=e===lucene;
+        return '<td class="hl-cell '+sizeClass(r,isBase)+'">'+r.toFixed(2)+'</td>';
+      }).join('')+'</tr>';
+    }
+    var hint=base?' <span class="hl-hint">(and relative to Lucene = 1.00; &gt;1 = larger)</span>':'';
+    el.innerHTML='<div class="hl-title">Index size on disk'+hint+'</div><table><thead>'+head+'</thead><tbody>'+sizeRow+ratioRow+'</tbody></table>';
   }
   function load(){ fetch('results.json').then(function(r){return r.json();}).then(render).catch(function(){}); }
   if(document.readyState!=='loading') load(); else document.addEventListener('DOMContentLoaded',load);
