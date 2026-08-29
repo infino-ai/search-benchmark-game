@@ -239,6 +239,12 @@ function IndexSize({ data }) {
           ) : null}
         </tbody>
       </table>
+      <div className="headline-note">
+        Note: infino’s on-disk index is a single columnar superfile that stores
+        the original <code>text</code> column for retrieval <em>in addition to</em>
+        the full-text index. The other engines here index the text without
+        storing it, so their size is index-only.
+      </div>
     </div>
   );
 }
