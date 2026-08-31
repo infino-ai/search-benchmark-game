@@ -132,7 +132,13 @@ aws s3 cp "s3://sbg-bench-corpus/corpus.json" corpus.json
 #   - official main nightly: the default full set (all engines, no baseline).
 MAKE_ARGS=()
 if [ "$IS_BRANCH_RUN" = "true" ] && [ "$SAME_BOX" = "true" ]; then
-  MAKE_ARGS+=(ENGINES="infino-0.1 infino-main tantivy-0.26 lucene-10.5.0")
+  # Branch benched both FIRST and LAST (infino-0.1 ... infino-0.1-last): the
+  # engines are measured sequentially in this order, so pinning the branch to a
+  # single position biases branch-vs-main by whatever within-run state the other
+  # engines leave behind. `infino-0.1-last` re-benches the same branch build +
+  # index in the last slot (no extra compile/index), so the fork page can show
+  # both positions and separate real deltas from measurement-position bias.
+  MAKE_ARGS+=(ENGINES="infino-0.1 infino-main tantivy-0.26 lucene-10.5.0 infino-0.1-last")
 elif [ "$IS_BRANCH_RUN" = "true" ]; then
   MAKE_ARGS+=(ENGINES=infino-0.1)
 fi

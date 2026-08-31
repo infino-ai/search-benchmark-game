@@ -27,8 +27,18 @@ import sys
 from pathlib import Path
 
 
+# The branch build is benched twice on a same-box run — first and last in the
+# engine order — under these two engine keys (see engines/infino-0.1-last and
+# scripts/user-data-template.sh). Both are the *same* branch build + index; the
+# pair brackets the harness's fixed-order position bias.
+BRANCH_ENGINE_FIRST = "infino-0.1"
+BRANCH_ENGINE_LAST = "infino-0.1-last"
+BRANCH_ENGINES = frozenset({BRANCH_ENGINE_FIRST, BRANCH_ENGINE_LAST})
+
+
 def branch_engine_key(label: str) -> str:
-    """Column label for the branch's infino, e.g. `infino-0.1 @my-branch`."""
+    """Column label stem for the branch's infino, e.g. `infino-0.1 @my-branch`.
+    The same-box page suffixes it with ` (first)` / ` (last)`."""
     branch = label.split("@", 1)[1] if "@" in label else label
     return f"infino-0.1 @{branch}"
 
@@ -40,26 +50,47 @@ def is_same_box(branch_full: dict) -> bool:
     they are the variance-free comparison and must be used directly — splicing
     the branch column into the committed baseline instead would compare it
     against a different nightly on a different box (cross-run variance that
-    reads as a spurious regression on unchanged query classes)."""
+    reads as a spurious regression on unchanged query classes).
+
+    Detected by the presence of a non-branch engine column: the branch's own
+    two positions (`infino-0.1` first, `infino-0.1-last` last) don't count."""
     for engines in branch_full.get("results", {}).values():
-        if any(k != "infino-0.1" for k in engines):
+        if any(k not in BRANCH_ENGINES for k in engines):
             return True
     return False
 
 
 def relabel_same_box(branch_full: dict, engine_key: str, label: str) -> dict:
-    """Same-box path: publish the branch run's own multi-engine results, with
-    its `infino-0.1` column (the branch build) relabeled `engine_key` so it is
-    self-identifying next to the same-run `infino-main` / lucene / tantivy."""
+    """Same-box path: publish the branch run's own multi-engine results. The
+    branch was benched both first and last, so its two columns are relabeled
+    `<engine_key> (first)` / `<engine_key> (last)` — self-identifying next to
+    the same-run `infino-main` / lucene / tantivy, and showing the reader how
+    much of any branch-vs-main delta is measurement position vs. code."""
+    first_key = f"{engine_key} (first)"
+    last_key = f"{engine_key} (last)"
     for engines in branch_full["results"].values():
-        if "infino-0.1" in engines:
-            engines[engine_key] = engines.pop("infino-0.1")
+        if BRANCH_ENGINE_FIRST in engines:
+            engines[first_key] = engines.pop(BRANCH_ENGINE_FIRST)
+        if BRANCH_ENGINE_LAST in engines:
+            engines[last_key] = engines.pop(BRANCH_ENGINE_LAST)
     details = branch_full.setdefault("details", {})
-    details.pop("infino-0.1", None)
-    details[engine_key] = [
+    details.pop(BRANCH_ENGINE_FIRST, None)
+    details.pop(BRANCH_ENGINE_LAST, None)
+    common = (
         f"infino-0.1 built from {label} (this fork's latest branch run), benched "
-        f"on the same instance as the infino-main / lucene / tantivy columns "
-        f"here — so branch-vs-main is variance-free."
+        f"on the same instance as the infino-main / lucene / tantivy columns here."
+    )
+    details[first_key] = [
+        common,
+        "Measured FIRST in the engine order. Engines are benched sequentially, "
+        "so the first and last slots see different within-run machine state; "
+        "compare this column with the (last) column to gauge how much of any "
+        "branch-vs-main delta is measurement position rather than code.",
+    ]
+    details[last_key] = [
+        common,
+        "Measured LAST in the engine order, after infino-main / lucene / tantivy "
+        "— same branch build and index as the (first) column.",
     ]
     return branch_full
 
