@@ -32,3 +32,4 @@ engines/**/.settings
 .vscode/
 pgo/
 cs_pgo/
+.infino/
