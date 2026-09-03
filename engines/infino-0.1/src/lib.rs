@@ -81,8 +81,11 @@ pub fn options(storage: Arc<dyn StorageProvider>) -> SupertableOptions {
             column: COLUMN.to_string(),
             // Token positions on: phrase queries are first-class.
             positions: true,
-            // Raw text stays in the Parquet body (the crate default).
-            stored: true,
+            // Index-only, matching how the other engines build the SBG
+            // index (Lucene does not store the field either): queries here
+            // only rank and count, never read the text back, so skipping
+            // the stored copy keeps the on-disk size comparable.
+            stored: false,
         }],
         vec![],
         Some(Arc::new(AsciiLowerTokenizer)),
