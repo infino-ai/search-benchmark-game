@@ -12,7 +12,6 @@ use std::sync::Arc;
 use arrow_schema::{DataType, Field, Schema};
 use infino::storage::StorageProvider;
 use infino::superfile::builder::FtsConfig;
-use infino::superfile::fts::tokenize::AsciiLowerTokenizer;
 use infino::supertable::manifest::list::PartitionStrategy;
 use infino::supertable::reader_cache::{DiskCacheConfig, DiskCacheStore};
 use infino::supertable::{Consistency, SupertableOptions};
@@ -77,18 +76,14 @@ pub fn options(storage: Arc<dyn StorageProvider>) -> SupertableOptions {
 
     SupertableOptions::new(
         schema(),
-        vec![FtsConfig {
-            column: COLUMN.to_string(),
-            // Token positions on: phrase queries are first-class.
-            positions: true,
-            // Index-only, matching how the other engines build the SBG
-            // index (Lucene does not store the field either): queries here
-            // only rank and count, never read the text back, so skipping
-            // the stored copy keeps the on-disk size comparable.
-            stored: false,
-        }],
+        // Token positions on: phrase queries are first-class. Index-only
+        // (stored(false)), matching how the other engines build the SBG
+        // index (Lucene does not store the field either): queries here
+        // only rank and count, never read the text back, so skipping the
+        // stored copy keeps the on-disk size comparable. The analyzer is
+        // the ascii_lower default.
+        vec![FtsConfig::new(COLUMN).positions(true).stored(false)],
         vec![],
-        Some(Arc::new(AsciiLowerTokenizer)),
     )
     .expect("valid supertable options")
     .with_partition_strategy(PartitionStrategy::Hash {
