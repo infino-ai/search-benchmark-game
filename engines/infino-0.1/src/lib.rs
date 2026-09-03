@@ -81,6 +81,8 @@ pub fn options(storage: Arc<dyn StorageProvider>) -> SupertableOptions {
             column: COLUMN.to_string(),
             // Token positions on: phrase queries are first-class.
             positions: true,
+            // Raw text stays in the Parquet body (the crate default).
+            stored: true,
         }],
         vec![],
         Some(Arc::new(AsciiLowerTokenizer)),
