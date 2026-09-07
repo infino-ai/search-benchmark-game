@@ -78,8 +78,13 @@ pub fn options(storage: Arc<dyn StorageProvider>) -> SupertableOptions {
         schema(),
         // Token positions on (phrase queries are first-class); the text is
         // index-only (stored(false)), matching how the other engines build
-        // the SBG index — Lucene does not store the body either.
-        vec![FtsConfig::new(COLUMN).positions(true).stored(false)],
+        // the SBG index — Lucene does not store the body either. The
+        // `standard` analyzer (UAX #29 + Unicode lowercase) is the
+        // Lucene-parity tokenizer, same as the infino-0.1 engine.
+        vec![FtsConfig::new(COLUMN)
+            .analyzer("standard")
+            .positions(true)
+            .stored(false)],
         vec![],
     )
     .expect("valid supertable options")
