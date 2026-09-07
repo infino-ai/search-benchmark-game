@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Compare infino-0.1 performance between two results.json files.
+Compare infino-0.6 performance between two results.json files.
 
 Usage:
   compare_results.py <baseline.json> <experiment.json> [--label <name>]
@@ -39,7 +39,7 @@ def load_infino(path):
     results = data.get("results", data)
     out = {}
     for metric, engines in results.items():
-        infino = engines.get("infino-0.1", [])
+        infino = engines.get("infino-0.6", [])
         out[metric] = {q["query"]: median(q["duration"]) for q in infino if q.get("duration")}
     return out
 
@@ -48,7 +48,7 @@ def compare(baseline_path, experiment_path, label):
     baseline = load_infino(baseline_path)
     experiment = load_infino(experiment_path)
 
-    lines = [f"## infino-0.1: `{label}` vs main\n"]
+    lines = [f"## infino-0.6: `{label}` vs main\n"]
 
     all_ratios = []
 

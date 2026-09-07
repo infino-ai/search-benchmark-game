@@ -115,7 +115,7 @@ localhost HTTP) is negligible, so the comparison is apples-to-apples.
 - Tantivy returns slightly more results because its tokenizer handles apostrophes differently.
 - Tantivy and Lucene both use BM25 and should return almost identical scores.
 
-### infino-0.1
+### infino-0.6
 
 infino is benchmarked on its **optimized paths only**. Commands without a
 first-class implementation return `UNSUPPORTED` rather than falling back to

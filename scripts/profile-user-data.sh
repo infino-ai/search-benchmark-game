@@ -79,11 +79,11 @@ aws s3 cp "s3://sbg-bench-corpus/corpus.json" corpus.json
 # is stripped anyway. perf still symbolicates functions from the retained ELF
 # symbol table (plain sampling, no call-graph — LBR/DWARF unavailable here).
 export RUSTFLAGS='-C target-cpu=native'
-( cd "$SBG/engines/infino-0.1"  && cargo build --release --bin build_index --bin do_query )
+( cd "$SBG/engines/infino-0.6"  && cargo build --release --bin build_index --bin do_query )
 ( cd "$SBG/engines/infino-main" && cargo build --release --bin build_index --bin do_query )
 
 # Build one index per codec.
-"$SBG/engines/infino-0.1/target/release/build_index"  "$SBG/idx256" < corpus.json
+"$SBG/engines/infino-0.6/target/release/build_index"  "$SBG/idx256" < corpus.json
 "$SBG/engines/infino-main/target/release/build_index" "$SBG/idx128" < corpus.json
 
 # Real query set per command, repeated so each profiled run is long enough that
@@ -146,7 +146,7 @@ profile_one() {  # $1=engine-dir  $2=index  $3=label  $4=query-file
 # mild thermal noise but the modes run back-to-back on one instance.
 for m in top10 top100 top1000 count; do
   profile_one infino-main "$SBG/idx128" "main128_$m" "/tmp/$m.txt"
-  profile_one infino-0.1  "$SBG/idx256" "branch256_$m" "/tmp/$m.txt"
+  profile_one infino-0.6  "$SBG/idx256" "branch256_$m" "/tmp/$m.txt"
 done
 
 # Compact branch-vs-main comparison from the perf-stat files, all four modes.

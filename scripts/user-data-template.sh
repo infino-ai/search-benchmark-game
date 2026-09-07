@@ -55,12 +55,12 @@ SBG_BRANCH="__SBG_BRANCH__"
 # When "true", also build a `main` infino baseline (the `infino-main` engine) and
 # bench it + lucene/tantivy alongside the branch on THIS instance, so
 # branch-vs-main / branch-vs-lucene are free of cross-instance variance. On by
-# default (the workflow input); 'false' skips it for a fast infino-0.1-only run.
+# default (the workflow input); 'false' skips it for a fast infino-0.6-only run.
 # It has no effect on a main run — see IS_BRANCH_RUN below.
 SAME_BOX="__SAME_BOX__"
 
 # A branch/fork run is anything other than the official infino-ai/infino main.
-# For a main run infino-0.1 already *is* main, so no separate baseline is built.
+# For a main run infino-0.6 already *is* main, so no separate baseline is built.
 IS_BRANCH_RUN=false
 if [ "$INFINO_BRANCH" != "main" ] || [ "$INFINO_REPO" != "infino-ai/infino" ]; then
   IS_BRANCH_RUN=true
@@ -75,7 +75,7 @@ source "$HOME/.cargo/env"
 rustup toolchain install 1.95.0
 
 # JDK 21 only needed for lucene — benched on the official main nightly and on
-# same-box runs; skipped on ordinary branch/fork runs (infino-0.1 only).
+# same-box runs; skipped on ordinary branch/fork runs (infino-0.6 only).
 if { [ "$INFINO_BRANCH" = "main" ] && [ "$INFINO_REPO" = "infino-ai/infino" ]; } \
   || [ "$SAME_BOX" = "true" ]; then
   if [ ! -d "$HOME/jdk-21.0.8+9" ]; then
@@ -90,7 +90,7 @@ fi
 
 GH_TOKEN=$(cat /run/sbg/gh-token)
 
-# infino source is a path dep for engines/infino-0.1 (../../../infino).
+# infino source is a path dep for engines/infino-0.6 (../../../infino).
 # public repo (and public forks) — no token needed.
 git clone "https://github.com/${INFINO_REPO}.git" "$HOME/infino"
 git clone "https://x-access-token:${GH_TOKEN}@github.com/infino-ai/search-benchmark-game.git" \
@@ -114,7 +114,7 @@ fi
 # Same-box baseline: a second infino checkout on `main`, the path dep of the
 # `infino-main` engine (../../../infino-main). Benching it on THIS instance
 # cancels the cross-instance variance of branch-vs-committed comparisons. Only
-# for branch/fork runs — for a main run infino-0.1 already is the baseline.
+# for branch/fork runs — for a main run infino-0.6 already is the baseline.
 if [ "$SAME_BOX" = "true" ] && [ "$IS_BRANCH_RUN" = "true" ]; then
   git clone "https://github.com/infino-ai/infino.git" "$HOME/infino-main"
   git -C "$HOME/infino-main" checkout main
@@ -126,21 +126,21 @@ cd "$HOME/search-benchmark-game"
 aws s3 cp "s3://sbg-bench-corpus/corpus.json" corpus.json
 
 # Engine selection:
-#   - same-box branch run (default): branch (infino-0.1) + main baseline
+#   - same-box branch run (default): branch (infino-0.6) + main baseline
 #     (infino-main) + lucene + tantivy, all on this instance;
-#   - fast branch run (same_box=false): infino-0.1 only (~30 min saved);
+#   - fast branch run (same_box=false): infino-0.6 only (~30 min saved);
 #   - official main nightly: the default full set (all engines, no baseline).
 MAKE_ARGS=()
 if [ "$IS_BRANCH_RUN" = "true" ] && [ "$SAME_BOX" = "true" ]; then
-  # Branch benched both FIRST and LAST (infino-0.1 ... infino-0.1-last): the
+  # Branch benched both FIRST and LAST (infino-0.6 ... infino-0.6-last): the
   # engines are measured sequentially in this order, so pinning the branch to a
   # single position biases branch-vs-main by whatever within-run state the other
-  # engines leave behind. `infino-0.1-last` re-benches the same branch build +
+  # engines leave behind. `infino-0.6-last` re-benches the same branch build +
   # index in the last slot (no extra compile/index), so the fork page can show
   # both positions and separate real deltas from measurement-position bias.
-  MAKE_ARGS+=(ENGINES="infino-0.1 infino-main tantivy-0.26 lucene-10.5.0 infino-0.1-last")
+  MAKE_ARGS+=(ENGINES="infino-0.6 infino-main tantivy-0.26 lucene-10.5.0 infino-0.6-last")
 elif [ "$IS_BRANCH_RUN" = "true" ]; then
-  MAKE_ARGS+=(ENGINES=infino-0.1)
+  MAKE_ARGS+=(ENGINES=infino-0.6)
 fi
 
 # compile + index once, then run both bench modes without re-indexing.

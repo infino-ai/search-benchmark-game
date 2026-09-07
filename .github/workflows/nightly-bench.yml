@@ -4,7 +4,7 @@ name: Nightly benchmark
 # results.json to master, and lets the existing pages.yml publish the dashboard.
 #
 # workflow_dispatch accepts an optional `infino_branch` input. When set to
-# anything other than "main", only infino-0.1 is benched (tantivy/lucene
+# anything other than "main", only infino-0.6 is benched (tantivy/lucene
 # skipped, ~30 min saved). The nightly results.json/results-full.json are NOT
 # overwritten; instead the run (1) posts a comparison vs the committed main
 # baseline to the job summary, and (2) publishes a per-fork dashboard page at
@@ -27,7 +27,7 @@ on:
         default: 'infino-ai/infino'
         required: false
       same_box:
-        description: 'Same-box A/B: bench a main-infino baseline + lucene/tantivy alongside the branch on one instance (variance-free branch-vs-main / branch-vs-lucene). Default on. Does not apply to a main run — infino-0.1 is already main, so no separate baseline is built.'
+        description: 'Same-box A/B: bench a main-infino baseline + lucene/tantivy alongside the branch on one instance (variance-free branch-vs-main / branch-vs-lucene). Default on. Does not apply to a main run — infino-0.6 is already main, so no separate baseline is built.'
         type: boolean
         default: true
         required: false
@@ -183,7 +183,7 @@ jobs:
             aws s3 cp "s3://$CORPUS_BUCKET/results-full-branch-${RUN_SLUG}.json" "results-full-branch-${RUN_SLUG}.json"
           fi
 
-      # Branch runs: compare infino-0.1 column vs committed main baseline and
+      # Branch runs: compare infino-0.6 column vs committed main baseline and
       # post a markdown table to the job summary. No commit to master.
       - name: Compare branch results vs main
         if: env.INFINO_BRANCH != 'main' || env.INFINO_REPO != 'infino-ai/infino'
@@ -219,7 +219,7 @@ jobs:
             --template    web/build/full/index.html \
             --out-dir     "web/build/${FORK_USER}/full" \
             --label       "${INFINO_REPO}@${INFINO_BRANCH}"
-          # Same-box run: also publish the raw multi-engine results (infino-0.1 +
+          # Same-box run: also publish the raw multi-engine results (infino-0.6 +
           # infino-main + lucene/tantivy, all benched on one instance) so
           # branch-vs-main / branch-vs-lucene are fetchable and variance-free.
           if [ "$SAME_BOX" = "true" ]; then
