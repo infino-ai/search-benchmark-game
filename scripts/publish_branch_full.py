@@ -9,10 +9,10 @@ Usage:
         --out-dir     web/build/<fork_user>/full \
         --label       "<repo>@<branch>"
 
-A branch/fork run only benches infino-0.1. To make the published page a true
+A branch/fork run only benches infino-0.6. To make the published page a true
 full-benchmark comparison (not a lone column), we splice the branch's infino
 column into the committed main baseline — which already carries the competitor
-engines and main's own infino — as a new engine `infino-0.1 @<branch>`. The page
+engines and main's own infino — as a new engine `infino-0.6 @<branch>`. The page
 then shows the branch side by side with tantivy, lucene, and main's infino.
 
 The page reuses the prebuilt `/full` index.html verbatim (same JS bundle, which
@@ -28,19 +28,19 @@ from pathlib import Path
 
 
 # The branch build is benched twice on a same-box run — first and last in the
-# engine order — under these two engine keys (see engines/infino-0.1-last and
+# engine order — under these two engine keys (see engines/infino-0.6-last and
 # scripts/user-data-template.sh). Both are the *same* branch build + index; the
 # pair brackets the harness's fixed-order position bias.
-BRANCH_ENGINE_FIRST = "infino-0.1"
-BRANCH_ENGINE_LAST = "infino-0.1-last"
+BRANCH_ENGINE_FIRST = "infino-0.6"
+BRANCH_ENGINE_LAST = "infino-0.6-last"
 BRANCH_ENGINES = frozenset({BRANCH_ENGINE_FIRST, BRANCH_ENGINE_LAST})
 
 
 def branch_engine_key(label: str) -> str:
-    """Column label stem for the branch's infino, e.g. `infino-0.1 @my-branch`.
+    """Column label stem for the branch's infino, e.g. `infino-0.6 @my-branch`.
     The same-box page suffixes it with ` (first)` / ` (last)`."""
     branch = label.split("@", 1)[1] if "@" in label else label
-    return f"infino-0.1 @{branch}"
+    return f"infino-0.6 @{branch}"
 
 
 def is_same_box(branch_full: dict) -> bool:
@@ -53,7 +53,7 @@ def is_same_box(branch_full: dict) -> bool:
     reads as a spurious regression on unchanged query classes).
 
     Detected by the presence of a non-branch engine column: the branch's own
-    two positions (`infino-0.1` first, `infino-0.1-last` last) don't count."""
+    two positions (`infino-0.6` first, `infino-0.6-last` last) don't count."""
     for engines in branch_full.get("results", {}).values():
         if any(k not in BRANCH_ENGINES for k in engines):
             return True
@@ -77,7 +77,7 @@ def relabel_same_box(branch_full: dict, engine_key: str, label: str) -> dict:
     details.pop(BRANCH_ENGINE_FIRST, None)
     details.pop(BRANCH_ENGINE_LAST, None)
     common = (
-        f"infino-0.1 built from {label} (this fork's latest branch run), benched "
+        f"infino-0.6 built from {label} (this fork's latest branch run), benched "
         f"on the same instance as the infino-main / lucene / tantivy columns here."
     )
     details[first_key] = [
@@ -104,14 +104,14 @@ def merge(main_full: dict, branch_full: dict, engine_key: str, label: str) -> di
     classes can drift by the box-to-box delta between the two nightlies."""
     branch_results = branch_full["results"]
     for mode, engines in main_full["results"].items():
-        branch_col = branch_results.get(mode, {}).get("infino-0.1")
+        branch_col = branch_results.get(mode, {}).get("infino-0.6")
         if branch_col is None:
-            print(f"  warning [{mode}]: branch run has no infino-0.1 column; "
+            print(f"  warning [{mode}]: branch run has no infino-0.6 column; "
                   f"skipping this mode for the branch", file=sys.stderr)
             continue
         engines[engine_key] = branch_col
     main_full.setdefault("details", {})[engine_key] = [
-        f"infino-0.1 built from {label} (this fork's latest branch run; compared "
+        f"infino-0.6 built from {label} (this fork's latest branch run; compared "
         f"against the committed baseline — cross-run, not same-box)."
     ]
     return main_full

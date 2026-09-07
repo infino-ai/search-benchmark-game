@@ -115,7 +115,7 @@ localhost HTTP) is negligible, so the comparison is apples-to-apples.
 - Tantivy returns slightly more results because its tokenizer handles apostrophes differently.
 - Tantivy and Lucene both use BM25 and should return almost identical scores.
 
-### infino-0.1
+### infino-0.6
 
 infino is benchmarked on its **optimized paths only**. Commands without a
 first-class implementation return `UNSUPPORTED` rather than falling back to
@@ -130,7 +130,7 @@ a slower workaround — so every reported number reflects infino's actual engine
 | Phrase queries (`"a b"`) | ✅ benchmarked — exact adjacency over positional postings |
 | `TOP_*_FILTER_%` | ❌ UNSUPPORTED — results are score-ordered only |
 
-Tokenization: `AsciiLowerTokenizer` (split on non-alphanumeric, ASCII-lowercase, no stemming) — equivalent to Lucene's `StandardTokenizer` on this corpus. BM25 with Lucene defaults (`k1 = 1.2`, `b = 0.75`).
+Tokenization: infino's `standard` analyzer (UAX #29 word segmentation, Unicode lowercase, no stemming) — the same split as Lucene's `StandardTokenizer` + `LowerCaseFilter`; on this pre-transformed corpus it reduces to whitespace splitting. BM25 with Lucene defaults (`k1 = 1.2`, `b = 0.75`).
 
 The index is built as multiple on-disk segments and then fully loaded into
 memory before benchmarking begins, so the query path is synchronous with no

@@ -54,9 +54,9 @@ SBG="$HOME/search-benchmark-game"; cd "$SBG"
 aws s3 cp "s3://sbg-bench-corpus/corpus.json" corpus.json
 
 export RUSTFLAGS='-C target-cpu=native'
-( cd "$SBG/engines/infino-0.1"  && cargo build --release --bin build_index --bin do_query )
+( cd "$SBG/engines/infino-0.6"  && cargo build --release --bin build_index --bin do_query )
 ( cd "$SBG/engines/infino-main" && cargo build --release --bin build_index --bin do_query )
-"$SBG/engines/infino-0.1/target/release/build_index"  "$SBG/idx256" < corpus.json
+"$SBG/engines/infino-0.6/target/release/build_index"  "$SBG/idx256" < corpus.json
 "$SBG/engines/infino-main/target/release/build_index" "$SBG/idx128" < corpus.json
 
 # Query sets per mode, for perf runs.

@@ -1,5 +1,5 @@
-# infino-0.1-last: a SECOND measurement of the exact same branch build and
-# index as engines/infino-0.1, but placed LAST in the engine list so a fork
+# infino-0.6-last: a SECOND measurement of the exact same branch build and
+# index as engines/infino-0.6, but placed LAST in the engine list so a fork
 # page can show the branch benched both first and last.
 #
 # Why: src/client.py measures engines sequentially in a fixed order, one full
@@ -12,7 +12,7 @@
 # delta is real vs. measurement position.
 #
 # This engine owns no build or index of its own: it reuses the sibling
-# engines/infino-0.1 binary and index (same branch source, same corpus), so it
+# engines/infino-0.6 binary and index (same branch source, same corpus), so it
 # adds a second measurement pass but no extra compile or index cost. compile /
 # index / clean are therefore intentional no-ops; the top-level Makefile still
 # iterates them over every engine, so they must exist and succeed.
@@ -24,4 +24,4 @@ index:
 clean:
 
 serve:
-	@../infino-0.1/target/release/do_query ../infino-0.1/idx
+	@../infino-0.6/target/release/do_query ../infino-0.6/idx

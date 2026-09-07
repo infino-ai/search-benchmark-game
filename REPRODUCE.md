@@ -34,7 +34,7 @@ rsync -avz -e "ssh -i $KEY" \
   --exclude corpus.json --exclude node_modules \
   ~/code/infino-ai/search-benchmark-game/ $BOX:~/search-benchmark-game/
 
-# infino crate (required by engines/infino-0.1/Cargo.toml path dep)
+# infino crate (required by engines/infino-0.6/Cargo.toml path dep)
 rsync -avz -e "ssh -i $KEY" \
   --exclude '.git' --exclude target \
   ~/code/infino-ai/infino/ $BOX:~/infino/

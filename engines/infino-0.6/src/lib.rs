@@ -80,9 +80,15 @@ pub fn options(storage: Arc<dyn StorageProvider>) -> SupertableOptions {
         // (stored(false)), matching how the other engines build the SBG
         // index (Lucene does not store the field either): queries here
         // only rank and count, never read the text back, so skipping the
-        // stored copy keeps the on-disk size comparable. The analyzer is
-        // the ascii_lower default.
-        vec![FtsConfig::new(COLUMN).positions(true).stored(false)],
+        // stored copy keeps the on-disk size comparable. The `standard`
+        // analyzer (UAX #29 word segmentation + Unicode lowercase) is the
+        // Lucene-parity tokenizer, so the split matches Lucene's
+        // `StandardTokenizer` on any corpus, not only the pre-transformed
+        // one benched here.
+        vec![FtsConfig::new(COLUMN)
+            .analyzer("standard")
+            .positions(true)
+            .stored(false)],
         vec![],
     )
     .expect("valid supertable options")
