@@ -24,8 +24,8 @@ built as multiple segments and read fully in memory.
 infino's `standard` analyzer: UAX #29 word segmentation plus Unicode
 lowercasing, no stemming — the same split as Lucene's `StandardTokenizer` +
 `LowerCaseFilter`. On the pre-transformed corpus (lowercase `[a-z]` and spaces
-only) it reduces to whitespace splitting, identical to the `ascii_lower`
-default. BM25 with Lucene defaults (`k1 = 1.2`, `b = 0.75`) and Lucene-style
+only) it reduces to whitespace splitting, identical to what infino's
+`ascii_lower` analyzer produces. BM25 with Lucene defaults (`k1 = 1.2`, `b = 0.75`) and Lucene-style
 IDF.
 
 ## Build & read
