@@ -50,7 +50,16 @@ jobs:
       SAME_BOX: ${{ inputs.same_box && 'true' || 'false' }}
 
     steps:
+      # Full history, not the default depth-1. The publish steps below rebase
+      # this ref onto remote master before pushing; with a shallow clone there
+      # is no merge base, so git cannot 3-way merge and reports every file that
+      # differs as an add/add conflict. That is invisible on a branch carrying
+      # only the page commit, and fatal on one that also carries a source
+      # change — which a branch benching an API-breaking engine change always
+      # does.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # Short-lived token covering both repos (clone infino + push results)
       - name: Generate GitHub App token
