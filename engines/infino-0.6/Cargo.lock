@@ -2109,7 +2109,7 @@ dependencies = [
 
 [[package]]
 name = "infino"
-version = "0.3.2"
+version = "0.7.0"
 dependencies = [
  "apache-avro",
  "arc-swap",
@@ -2145,6 +2145,7 @@ dependencies = [
  "rayon",
  "roaring",
  "rustc-hash",
+ "rustix",
  "serde",
  "serde_json",
  "static_assertions",

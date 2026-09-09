@@ -18,7 +18,7 @@ use std::io::{self, BufRead};
 use std::sync::Arc;
 
 use infino::storage::{LocalFsStorageProvider, StorageProvider};
-use infino::superfile::fts::reader::{BoolMode, Bm25Stats};
+use infino::superfile::fts::reader::{Bm25SearchOptions, Bm25Stats, BoolMode};
 use infino::supertable::Supertable;
 use infino::supertable::reader_cache::{InMemoryReaderCache, SuperfileReaderCache};
 
@@ -72,7 +72,7 @@ fn main() {
             }
             _ if query.trim().is_empty() => Ok(0usize),
             "TOP_10" | "TOP_100" | "TOP_1000" => reader
-                .bm25_search(COLUMN, query, top_k(command), mode, Bm25Stats::PerSuperfile, None)
+                .bm25_search(COLUMN, query, top_k(command), search_opts(mode), None)
                 .map(|_| 1),
             // Plain COUNT: native posting-list traversal, no scoring.
             "COUNT" => reader
@@ -82,7 +82,13 @@ fn main() {
             // two passes, matching what engines like Lucene do for this command.
             "TOP_1_COUNT" | "TOP_5_COUNT" | "TOP_10_COUNT"
             | "TOP_100_COUNT" | "TOP_1000_COUNT" => reader
-                .bm25_search(COLUMN, query, top_k_count(command), mode, Bm25Stats::PerSuperfile, None)
+                .bm25_search(
+                    COLUMN,
+                    query,
+                    top_k_count(command),
+                    search_opts(mode),
+                    None,
+                )
                 .and_then(|_| reader.count(COLUMN, query, mode))
                 .map(|n| n as usize),
             _ => {
@@ -98,6 +104,21 @@ fn main() {
             }
         }
     }
+}
+
+/// Search options for every ranked command, in one place so the two
+/// call sites cannot drift apart on the statistics scope.
+///
+/// `PerSuperfile` is deliberate and unchanged: the harness measures the
+/// per-segment fan-out without the table-wide document-frequency gather
+/// that global statistics add, so the number reflects the query kernels
+/// rather than a preliminary pass. The BM25 parameters are left at the
+/// engine's declared defaults — this harness measures the standard
+/// scoring configuration.
+fn search_opts(mode: BoolMode) -> Bm25SearchOptions {
+    Bm25SearchOptions::new()
+        .with_mode(mode)
+        .with_stats(Bm25Stats::PerSuperfile)
 }
 
 fn top_k(command: &str) -> usize {
