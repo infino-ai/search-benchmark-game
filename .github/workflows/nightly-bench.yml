@@ -252,26 +252,44 @@ jobs:
         if: env.INFINO_BRANCH != 'main' || env.INFINO_REPO != 'infino-ai/infino'
         run: |
           FORK_USER="${{ steps.fork-page.outputs.fork_user }}"
+          PAGE_DIR="web/build/${FORK_USER}/full"
           git config user.name  "sbg-ci"
           git config user.email "sbg-ci@infino.ai"
-          git add "web/build/${FORK_USER}/full"
-          git diff --cached --quiet && echo "fork page unchanged — nothing to push" && exit 0
-          git commit -m "pages: ${INFINO_REPO}@${INFINO_BRANCH} full-benchmark run"
           # Remove actions/checkout's credential helper so the App token in the
           # push URL is used instead of the default GITHUB_TOKEN.
           git config --unset-all http.https://github.com/.extraheader || true
           PUSH_URL="https://x-access-token:${{ steps.fork-push-token.outputs.token }}@github.com/infino-ai/search-benchmark-game.git"
-          # master can advance during the ~1 h bench (e.g. a nightly results
-          # commit). The page commit only touches web/build/<fork>/full/**, so
-          # it rebases cleanly over other changes. Retry to absorb a lost race,
-          # matching the results push below.
+
+          # Publish ONLY the generated page. A branch run is checked out at the
+          # dispatched branch, which for an engine-API change also carries the
+          # source commits that made the wrapper compile. Committing on that
+          # HEAD and pushing HEAD:master shipped those commits to master as a
+          # side effect of publishing a result — a benchmark run must not be a
+          # code-merge path.
+          #
+          # So the page is lifted out of the work tree, master is checked out
+          # fresh, and the page is replayed onto it: the pushed commit's tree
+          # is master's tree plus web/build/<fork>/full/**, and nothing else
+          # from the branch can ride along. This also removes the rebase, and
+          # with it the add/add conflicts a rebase hit whenever the branch
+          # carried a source change.
+          STAGE="$(mktemp -d)"
+          cp -a "$PAGE_DIR/." "$STAGE/"
+
           for attempt in 1 2 3 4 5; do
+            # master can advance during the ~2 h bench (e.g. a merged PR), so
+            # re-read it on every attempt and rebuild the commit on top.
             git fetch "$PUSH_URL" master
-            if ! git rebase FETCH_HEAD; then
-              git rebase --abort
-              echo "rebase onto remote master failed" >&2
-              exit 1
+            git checkout -f -B sbg-page-push FETCH_HEAD
+            rm -rf "$PAGE_DIR"
+            mkdir -p "$PAGE_DIR"
+            cp -a "$STAGE/." "$PAGE_DIR/"
+            git add -A "$PAGE_DIR"
+            if git diff --cached --quiet; then
+              echo "fork page unchanged — nothing to push"
+              exit 0
             fi
+            git commit -m "pages: ${INFINO_REPO}@${INFINO_BRANCH} full-benchmark run"
             if git push "$PUSH_URL" HEAD:master; then
               echo "pushed fork page on attempt $attempt"
               exit 0
