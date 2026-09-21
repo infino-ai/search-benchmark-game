@@ -6,10 +6,10 @@ BM25 full-text index baked in. This engine benchmarks infino's **supertable**
 query path (manifest + per-segment fan-out) — the production query surface —
 built as multiple segments and read fully in memory.
 
-It builds from the **main line**, path-depped at `../../../infino-main` — the
-bench box always clones `infino-ai/infino` at `main` there, whatever branch is
-under test. It is the baseline the `infino-branch` column is read against, and
-the unreleased counterpart to the published `infino-0.8` column.
+It builds from the **infino checkout under test**, path-depped at
+`../../../infino` — the bench box clones the dispatched repo and branch there,
+so this engine is always the code being evaluated. Pair it with `infino-main`
+(the same engine over `main`) for a branch-vs-main read on one instance.
 
 ## Scope: benchmarked commands
 

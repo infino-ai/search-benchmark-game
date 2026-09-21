@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Compare infino-0.6 performance between two results.json files.
+Compare infino's performance between two results.json files.
 
 Usage:
   compare_results.py <baseline.json> <experiment.json> [--label <name>]
@@ -33,22 +33,55 @@ def load_index_sizes(path):
         return json.load(f).get("index_sizes", {}) or {}
 
 
-def load_infino(path):
+# Which infino column to read on each side, most-preferred first.
+#
+# The baseline is the committed nightly, which carries both `infino-main` (the
+# development line) and `infino-0.8` (the published crate); main is the right
+# thing to judge a branch against. The experiment is a branch run, whose own
+# column is `infino-branch` — on a same-box run it also carries `infino-main`,
+# and preferring the branch column there is what makes this branch-vs-main
+# rather than main-vs-main. `infino-0.6` / `infino-0.8` trail both lists so a
+# comparison against a baseline committed before these renames still resolves
+# a column instead of silently printing an empty table.
+BASELINE_ENGINES = ("infino-main", "infino-0.8", "infino-0.6")
+EXPERIMENT_ENGINES = ("infino-branch", "infino-main", "infino-0.8", "infino-0.6")
+
+
+def pick_engine(results, preference):
+    """First column in `preference` that any metric in `results` carries."""
+    present = {engine for engines in results.values() for engine in engines}
+    for key in preference:
+        if key in present:
+            return key
+    return None
+
+
+def load_infino(path, preference):
+    """Return ({metric: {query: median_us}}, engine_key) for one results file."""
     with open(path) as f:
         data = json.load(f)
     results = data.get("results", data)
+    engine = pick_engine(results, preference)
     out = {}
     for metric, engines in results.items():
-        infino = engines.get("infino-0.6", [])
+        infino = engines.get(engine, []) if engine else []
         out[metric] = {q["query"]: median(q["duration"]) for q in infino if q.get("duration")}
-    return out
+    return out, engine
 
 
 def compare(baseline_path, experiment_path, label):
-    baseline = load_infino(baseline_path)
-    experiment = load_infino(experiment_path)
+    baseline, baseline_engine = load_infino(baseline_path, BASELINE_ENGINES)
+    experiment, experiment_engine = load_infino(experiment_path, EXPERIMENT_ENGINES)
 
-    lines = [f"## infino-0.6: `{label}` vs main\n"]
+    lines = [
+        f"## infino: `{label}` vs main\n",
+        f"`{experiment_engine or 'none'}` (this run) vs "
+        f"`{baseline_engine or 'none'}` (committed baseline)\n",
+    ]
+    if experiment_engine is None or baseline_engine is None:
+        lines.append("No infino column on one side — nothing to compare.\n")
+        print("\n".join(lines))
+        return
 
     all_ratios = []
 
@@ -89,18 +122,31 @@ def compare(baseline_path, experiment_path, label):
         lines.append("### Index size\n")
         lines.append("| engine | main | branch | Δ% |")
         lines.append("|---|---:|---:|---:|")
-        # Preserve the ENGINES / results.json order (branch first, then any
-        # baseline-only engine) so this matches the latency ordering rather
-        # than alphabetizing.
-        for engine in dict.fromkeys(list(e_sizes) + list(b_sizes)):
-            b = b_sizes.get(engine)
-            e = e_sizes.get(engine)
+
+        def size_row(label, b, e):
             if b and e:
                 pct = (e / b - 1) * 100
                 delta = f"{'+' if pct > 0 else ''}{pct:.2f}%"
             else:
                 delta = "—"
-            lines.append(f"| {engine} | {fmt_bytes(b)} | {fmt_bytes(e)} | {delta} |")
+            lines.append(f"| {label} | {fmt_bytes(b)} | {fmt_bytes(e)} | {delta} |")
+
+        # The two infino columns carry different names on each side
+        # (`infino-branch` here, `infino-main` in the baseline), so pair them
+        # explicitly first; everything else pairs by name, in the ENGINES /
+        # results.json order (branch first, then any baseline-only engine) so
+        # this matches the latency ordering rather than alphabetizing.
+        infino_label = (
+            experiment_engine if experiment_engine == baseline_engine
+            else f"{experiment_engine} vs {baseline_engine}"
+        )
+        size_row(infino_label,
+                 b_sizes.get(baseline_engine), e_sizes.get(experiment_engine))
+        paired = {baseline_engine, experiment_engine}
+        for engine in dict.fromkeys(list(e_sizes) + list(b_sizes)):
+            if engine in paired:
+                continue
+            size_row(engine, b_sizes.get(engine), e_sizes.get(engine))
         lines.append("")
 
     if all_ratios:

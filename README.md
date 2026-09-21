@@ -115,7 +115,21 @@ localhost HTTP) is negligible, so the comparison is apples-to-apples.
 - Tantivy returns slightly more results because its tokenizer handles apostrophes differently.
 - Tantivy and Lucene both use BM25 and should return almost identical scores.
 
-### infino-0.6
+### infino
+
+infino appears as up to three columns, one per source of the engine code. They
+are the same benchmark harness (`engines/infino-*` differ only in where the
+crate comes from):
+
+| engine | source | benched on |
+|---|---|---|
+| `infino-0.8` | the published crate, latest release on the 0.8 line | every nightly |
+| `infino-main` | `infino-ai/infino` at `main`, path-depped at `../../../infino-main` | every nightly, and as the baseline on a branch run |
+| `infino-branch` | the repo/ref dispatched into the workflow, path-depped at `../../../infino` | branch and fork runs only |
+
+`infino-branch-last` is not a fourth build: it re-benches the `infino-branch`
+binary and index in the last engine slot, so a fork page can show how much of a
+branch-vs-main delta is measurement position rather than code.
 
 infino is benchmarked on its **optimized paths only**. Commands without a
 first-class implementation return `UNSUPPORTED` rather than falling back to

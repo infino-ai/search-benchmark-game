@@ -52,15 +52,15 @@ export TMPDIR="$HOME/tmp"
 INFINO_BRANCH="__INFINO_BRANCH__"
 INFINO_REPO="__INFINO_REPO__"
 SBG_BRANCH="__SBG_BRANCH__"
-# When "true", also build a `main` infino baseline (the `infino-main` engine) and
-# bench it + lucene/tantivy alongside the branch on THIS instance, so
-# branch-vs-main / branch-vs-lucene are free of cross-instance variance. On by
-# default (the workflow input); 'false' skips it for a fast infino-0.6-only run.
+# When "true", also bench lucene/tantivy alongside the branch and its main
+# baseline on THIS instance, so branch-vs-lucene is free of cross-instance
+# variance too. On by default (the workflow input); 'false' trims the run to
+# the branch column alone, compared cross-run against the committed baseline.
 # It has no effect on a main run — see IS_BRANCH_RUN below.
 SAME_BOX="__SAME_BOX__"
 
 # A branch/fork run is anything other than the official infino-ai/infino main.
-# For a main run infino-0.6 already *is* main, so no separate baseline is built.
+# A main run has no branch column: infino-main already covers that code.
 IS_BRANCH_RUN=false
 if [ "$INFINO_BRANCH" != "main" ] || [ "$INFINO_REPO" != "infino-ai/infino" ]; then
   IS_BRANCH_RUN=true
@@ -75,7 +75,7 @@ source "$HOME/.cargo/env"
 rustup toolchain install 1.95.0
 
 # JDK 21 only needed for lucene — benched on the official main nightly and on
-# same-box runs; skipped on ordinary branch/fork runs (infino-0.6 only).
+# same-box runs; skipped on fast branch/fork runs (the branch column only).
 if { [ "$INFINO_BRANCH" = "main" ] && [ "$INFINO_REPO" = "infino-ai/infino" ]; } \
   || [ "$SAME_BOX" = "true" ]; then
   if [ ! -d "$HOME/jdk-21.0.8+9" ]; then
@@ -90,14 +90,27 @@ fi
 
 GH_TOKEN=$(cat /run/sbg/gh-token)
 
-# infino source is a path dep for engines/infino-0.6 (../../../infino).
-# public repo (and public forks) — no token needed.
-git clone "https://github.com/${INFINO_REPO}.git" "$HOME/infino"
+# Two infino checkouts, one per path-dep engine (public repo and public forks
+# — no token needed):
+#   $HOME/infino-main -> engines/infino-main, ALWAYS infino-ai/infino at main,
+#                        so main is a constant column no matter what is under
+#                        test. Cloned unconditionally: cheap next to the bench,
+#                        and it keeps a hand-run `make ENGINES=infino-main` on
+#                        the box working even on a run that skips that column.
+#   $HOME/infino      -> engines/infino-branch, the dispatched repo/ref. Only
+#                        cloned for a branch/fork run; a main run has nothing to
+#                        put in that column that infino-main isn't already.
+# (engines/infino-0.8 needs neither — it builds the published crate.)
+git clone "https://github.com/infino-ai/infino.git" "$HOME/infino-main"
+git -C "$HOME/infino-main" checkout main
+
+if [ "$IS_BRANCH_RUN" = "true" ]; then
+  git clone "https://github.com/${INFINO_REPO}.git" "$HOME/infino"
+  git -C "$HOME/infino" checkout "$INFINO_BRANCH"
+fi
+
 git clone "https://x-access-token:${GH_TOKEN}@github.com/infino-ai/search-benchmark-game.git" \
   "$HOME/search-benchmark-game"
-
-# check out the requested branches before compilation
-git -C "$HOME/infino" checkout "$INFINO_BRANCH"
 git -C "$HOME/search-benchmark-game" checkout "$SBG_BRANCH"
 
 # The iresearch (SereneDB) engine is only benched on the official main nightly
@@ -111,36 +124,30 @@ if [ "$IS_BRANCH_RUN" = "false" ]; then
     engines/iresearch-26.03.1/serenedb
 fi
 
-# Same-box baseline: a second infino checkout on `main`, the path dep of the
-# `infino-main` engine (../../../infino-main). Benching it on THIS instance
-# cancels the cross-instance variance of branch-vs-committed comparisons. Only
-# for branch/fork runs — for a main run infino-0.6 already is the baseline.
-if [ "$SAME_BOX" = "true" ] && [ "$IS_BRANCH_RUN" = "true" ]; then
-  git clone "https://github.com/infino-ai/infino.git" "$HOME/infino-main"
-  git -C "$HOME/infino-main" checkout main
-fi
-
 cd "$HOME/search-benchmark-game"
 
 # corpus from S3
 aws s3 cp "s3://sbg-bench-corpus/corpus.json" corpus.json
 
 # Engine selection:
-#   - same-box branch run (default): branch (infino-0.6) + main baseline
+#   - same-box branch run (default): branch (infino-branch) + main baseline
 #     (infino-main) + lucene + tantivy, all on this instance;
-#   - fast branch run (same_box=false): infino-0.6 only (~30 min saved);
-#   - official main nightly: the default full set (all engines, no baseline).
+#   - fast branch run (same_box=false): infino-branch alone (~30 min saved),
+#     compared cross-run against the committed main baseline;
+#   - official main nightly: the default full set from the Makefile
+#     (infino-0.8 + infino-main + the competitor engines).
 MAKE_ARGS=()
 if [ "$IS_BRANCH_RUN" = "true" ] && [ "$SAME_BOX" = "true" ]; then
-  # Branch benched both FIRST and LAST (infino-0.6 ... infino-0.6-last): the
-  # engines are measured sequentially in this order, so pinning the branch to a
-  # single position biases branch-vs-main by whatever within-run state the other
-  # engines leave behind. `infino-0.6-last` re-benches the same branch build +
-  # index in the last slot (no extra compile/index), so the fork page can show
-  # both positions and separate real deltas from measurement-position bias.
-  MAKE_ARGS+=(ENGINES="infino-0.6 infino-main tantivy-0.26 lucene-10.5.0 infino-0.6-last")
+  # Branch benched both FIRST and LAST (infino-branch ... infino-branch-last):
+  # the engines are measured sequentially in this order, so pinning the branch
+  # to a single position biases branch-vs-main by whatever within-run state the
+  # other engines leave behind. `infino-branch-last` re-benches the same branch
+  # build + index in the last slot (no extra compile/index), so the fork page
+  # can show both positions and separate real deltas from measurement-position
+  # bias.
+  MAKE_ARGS+=(ENGINES="infino-branch infino-main tantivy-0.26 lucene-10.5.0 infino-branch-last")
 elif [ "$IS_BRANCH_RUN" = "true" ]; then
-  MAKE_ARGS+=(ENGINES=infino-0.6)
+  MAKE_ARGS+=(ENGINES=infino-branch)
 fi
 
 # compile + index once, then run both bench modes without re-indexing.

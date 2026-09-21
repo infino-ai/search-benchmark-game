@@ -18,10 +18,18 @@ Note the `public_ip`. The key is written to `terraform/sbg-bench-key.pem`.
 
 ---
 
-## Step 2 — Push both repos to the box (from your Mac)
+## Step 2 — Push the harness to the box (from your Mac)
 
-The infino engine has a path dependency on the infino crate — both repos must
-be on the box.
+`infino-0.8` pulls the infino crate from crates.io, but the other two infino
+engines are path deps and need a checkout each on the box:
+
+| engine | path dep | put on the box at |
+|---|---|---|
+| `infino-main` | `../../../infino-main` | `~/infino-main`, at `main` |
+| `infino-branch` | `../../../infino` | `~/infino`, at the ref you want measured |
+
+`infino-main` is in the default `ENGINES`, so its checkout is required for a
+plain run; `infino` is only needed if you add `infino-branch`.
 
 ```bash
 # set this to whatever terraform printed
@@ -34,7 +42,13 @@ rsync -avz -e "ssh -i $KEY" \
   --exclude corpus.json --exclude node_modules \
   ~/code/infino-ai/search-benchmark-game/ $BOX:~/search-benchmark-game/
 
-# infino crate (required by engines/infino-0.6/Cargo.toml path dep)
+# main checkout — the `infino-main` engine's path dep
+rsync -avz -e "ssh -i $KEY" \
+  --exclude '.git' --exclude target \
+  ~/code/infino-ai/infino/ $BOX:~/infino-main/
+
+# the ref under test — the `infino-branch` engine's path dep (skip if you
+# are not benching that column)
 rsync -avz -e "ssh -i $KEY" \
   --exclude '.git' --exclude target \
   ~/code/infino-ai/infino/ $BOX:~/infino/
