@@ -2,10 +2,14 @@ name: Nightly benchmark
 
 # Runs the full turbopuffer-comparison bench on a c7i.2xlarge, commits
 # results.json to master, and lets the existing pages.yml publish the dashboard.
+# The nightly benches two infino columns: `infino-0.8` (the published crate)
+# and `infino-main` (the tip of infino-ai/infino main).
 #
 # workflow_dispatch accepts an optional `infino_branch` input. When set to
-# anything other than "main", only infino-0.6 is benched (tantivy/lucene
-# skipped, ~30 min saved). The nightly results.json/results-full.json are NOT
+# anything other than "main", the dispatched ref is benched as the
+# `infino-branch` engine — by default alongside `infino-main` + lucene/tantivy
+# on one instance, or alone with `same_box: false` (tantivy/lucene skipped,
+# ~30 min saved). The nightly results.json/results-full.json are NOT
 # overwritten; instead the run (1) posts a comparison vs the committed main
 # baseline to the job summary, and (2) publishes a per-fork dashboard page at
 # <fork_user>/full showing this branch's infino column alongside the baseline
@@ -27,7 +31,7 @@ on:
         default: 'infino-ai/infino'
         required: false
       same_box:
-        description: 'Same-box A/B: bench a main-infino baseline + lucene/tantivy alongside the branch on one instance (variance-free branch-vs-main / branch-vs-lucene). Default on. Does not apply to a main run — infino-0.6 is already main, so no separate baseline is built.'
+        description: 'Same-box A/B: bench lucene/tantivy alongside infino-branch + infino-main on one instance (variance-free branch-vs-main / branch-vs-lucene). Default on; off trims the run to the infino-branch column alone, compared cross-run against the committed baseline. Does not apply to a main run — infino-main already covers main.'
         type: boolean
         default: true
         required: false
@@ -192,7 +196,8 @@ jobs:
             aws s3 cp "s3://$CORPUS_BUCKET/results-full-branch-${RUN_SLUG}.json" "results-full-branch-${RUN_SLUG}.json"
           fi
 
-      # Branch runs: compare infino-0.6 column vs committed main baseline and
+      # Branch runs: compare the infino-branch column vs the committed main
+      # baseline's infino-main column (see scripts/compare_results.py) and
       # post a markdown table to the job summary. No commit to master.
       - name: Compare branch results vs main
         if: env.INFINO_BRANCH != 'main' || env.INFINO_REPO != 'infino-ai/infino'
@@ -228,8 +233,9 @@ jobs:
             --template    web/build/full/index.html \
             --out-dir     "web/build/${FORK_USER}/full" \
             --label       "${INFINO_REPO}@${INFINO_BRANCH}"
-          # Same-box run: also publish the raw multi-engine results (infino-0.6 +
-          # infino-main + lucene/tantivy, all benched on one instance) so
+          # Same-box run: also publish the raw multi-engine results
+          # (infino-branch + infino-main + lucene/tantivy, all benched on one
+          # instance) so
           # branch-vs-main / branch-vs-lucene are fetchable and variance-free.
           if [ "$SAME_BOX" = "true" ]; then
             cp "results-full-branch-${RUN_SLUG}.json" \
