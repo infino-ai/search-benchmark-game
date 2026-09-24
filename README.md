@@ -6,7 +6,7 @@ aspects of search engine technologies.
 
 The results are available at:
 
-- **[full benchmark](https://infino-ai.github.io/search-benchmark-game/)** — 962-query standard set (infino, tantivy, lucene, iresearch), updated nightly. Also served at `/full`.
+- **[full benchmark](https://infino-ai.github.io/search-benchmark-game/)** — 962-query standard set (infino, tantivy, lucene, lucene with doc reordering, iresearch), updated nightly. Also served at `/full`.
 - **[turbopuffer comparison](https://infino-ai.github.io/search-benchmark-game/tpuf)** — infino vs tantivy vs lucene vs turbopuffer on turbopuffer's 31-query set, updated nightly
 - **per-fork branch page** — `https://infino-ai.github.io/search-benchmark-game/<fork_user>/full`, the same full benchmark with the latest branch run from a public infino fork spliced in as an extra infino column. Produced by dispatching the nightly workflow with `infino_repo`/`infino_branch` inputs; each fork's page is overwritten by that fork's next run.
 
@@ -15,7 +15,8 @@ This benchmark is both
 - **for library** developers to identify optimization opportunities by comparing
 their implementation to other implementations.
 
-Currently, the benchmark includes infino, tantivy, Lucene, and iresearch
+Currently, the benchmark includes infino, tantivy, Lucene (plain and
+doc-reordered), and iresearch
 (plus turbopuffer's published numbers on the `/tpuf` page).
 It is reasonably simple to add another engine.
 
