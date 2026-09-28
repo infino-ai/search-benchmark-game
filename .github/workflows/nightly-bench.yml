@@ -143,16 +143,20 @@ jobs:
           echo "id=$INSTANCE_ID" >> "$GITHUB_OUTPUT"
           echo "Launched instance: $INSTANCE_ID"
 
-      # Poll every 60 s; bench typically finishes in ~2 h
-      - name: Wait for benchmark to complete (3 h timeout)
-        timeout-minutes: 180
+      # Poll every 60 s; bench typically finishes in ~2 h.
+      # GitHub-hosted jobs are hard-capped at 6 h, and a job killed by that
+      # cap skips the `always()` cleanup below, leaving the EC2 instance
+      # running. Keep the wait a little under the cap so the step fails
+      # normally and the instance is still terminated.
+      - name: Wait for benchmark to complete (5 h 45 m timeout)
+        timeout-minutes: 345
         run: |
           echo "Polling /sbg-bench/done every 60s …"
           while true; do
             # Distinguish "not set yet" (ParameterNotFound — keep polling)
             # from any other failure (expired creds, throttle, API error).
             # The old `2>/dev/null || echo pending` masked those and spun
-            # to the 3 h timeout on expired credentials; fail loudly here.
+            # to the timeout on expired credentials; fail loudly here.
             if OUT=$(aws ssm get-parameter \
                 --name /sbg-bench/done \
                 --query 'Parameter.Value' \
