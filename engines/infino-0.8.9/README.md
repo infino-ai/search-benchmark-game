@@ -6,8 +6,8 @@ BM25 full-text index baked in. This engine benchmarks infino's **supertable**
 query path (manifest + per-segment fan-out) — the production query surface —
 built as multiple segments and read fully in memory.
 
-It builds against the **published crate**, `infino = "0.8"` — the latest
-release on the 0.8 line at the time the run's `Cargo.lock` was resolved, not a
+It builds against the **published crate**, pinned exactly to
+`infino = "=0.8.9"` — the version the engine is named for, not a
 working-tree checkout.
 
 ## Scope: benchmarked commands

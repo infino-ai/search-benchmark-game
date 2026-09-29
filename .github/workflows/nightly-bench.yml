@@ -2,7 +2,7 @@ name: Nightly benchmark
 
 # Runs the full turbopuffer-comparison bench on a c7i.2xlarge, commits
 # results.json to master, and lets the existing pages.yml publish the dashboard.
-# The nightly benches two infino columns: `infino-0.8` (the published crate)
+# The nightly benches two infino columns: `infino-0.8.9` (the published crate)
 # and `infino-main` (the tip of infino-ai/infino main).
 #
 # workflow_dispatch accepts an optional `infino_branch` input. When set to
