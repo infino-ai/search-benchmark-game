@@ -194,6 +194,65 @@ function Headline({ data }) {
 // order as the headline; two rows — absolute size and size relative to
 // Lucene (Lucene = 1.00, >1 = larger). Renders nothing for runs whose
 // results.json predates index-size recording.
+// One engine's provenance as a sentence, or null when it has none. Engines
+// whose version is already in their column name (lucene-10.5.0, tantivy-0.26)
+// record nothing, so nothing is shown for them.
+function engineProvenanceLine(prov) {
+  if (!prov) return null;
+  if (prov.source === "crate" && prov.version) {
+    return "Built from the published crate " + prov.version + ".";
+  }
+  if (prov.source === "checkout") {
+    if (prov.unavailable || !prov.commit) {
+      return "Built from a checkout whose commit was not recorded.";
+    }
+    const where = (prov.repo || "unknown repo") + (prov.branch ? " " + prov.branch : "");
+    const when = prov.commit_date ? " (" + prov.commit_date.slice(0, 10) + ")" : "";
+    return "Built from " + where + " @ " + prov.commit.slice(0, 10) + when + ".";
+  }
+  return null;
+}
+
+// What produced this page: corpus, document count, query set, and when it ran.
+// Renders nothing for runs whose results.json predates provenance recording,
+// which is every file committed before it existed.
+function RunProvenance({ data }) {
+  const run = data.run;
+  if (!run || run.error) return null;
+  const bits = [];
+  if (run.corpus) {
+    const c = run.corpus;
+    bits.push(c.docs != null
+      ? c.name + " \u00b7 " + numberWithCommas(c.docs) + " docs"
+      : c.name);
+  }
+  if (run.queries && run.queries.name) {
+    bits.push(run.queries.count != null
+      ? run.queries.count + " queries (" + run.queries.name + ")"
+      : run.queries.name);
+  }
+  if (run.started_utc) {
+    bits.push("run " + run.started_utc.replace("T", " ").replace("+00:00", " UTC"));
+  }
+  if (bits.length === 0) return null;
+  const engines = run.engines || {};
+  const named = Object.keys(engines)
+    .map(e => ({ engine: e, line: engineProvenanceLine(engines[e]) }))
+    .filter(x => x.line);
+  return (
+    <div className="headline">
+      <div className="headline-title">
+        What produced this page <span className="headline-hint">{bits.join(" \u00b7 ")}</span>
+      </div>
+      {named.length > 0 ? (
+        <ul className="details">
+          {named.map(x => <li key={"prov-" + x.engine}><b>{x.engine}</b>: {x.line}</li>)}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 function IndexSize({ data }) {
   const sizes = data.index_sizes;
   if (!sizes || Object.keys(sizes).length === 0) return null;
@@ -270,13 +329,15 @@ function stats_row(engines, name, className, stat) {
           </tr>;
 }
 
-function details_list(engine_details) {
+function details_list(engine_details, prov) {
+  const provLine = engineProvenanceLine(prov);
   return <ul className="details">
     {
-      engine_details.map(detail => {
+      (engine_details || []).map(detail => {
         return <li>{detail}</li>;
       })
     }
+    { provLine ? <li>{provLine}</li> : null }
     </ul>;
 }
 
@@ -400,6 +461,7 @@ class Benchmark extends React.Component {
     return <div>
       <Headline data={this.props.data} />
       <IndexSize data={this.props.data} />
+      <RunProvenance data={this.props.data} />
       <form>
         <fieldset>
           <label htmlFor="collectionField">Collection type</label>
@@ -419,7 +481,7 @@ class Benchmark extends React.Component {
           <tr>
             <th>Query</th>
             {
-              Object.keys(data_view.engines).map((engine) => <th key={"col-" + engine}><details><summary>{engine}</summary>{ details_list(data_view.details[engine]) }</details></th>)
+              Object.keys(data_view.engines).map((engine) => <th key={"col-" + engine}><details><summary>{engine}</summary>{ details_list(data_view.details[engine], ((this.props.data.run || {}).engines || {})[engine]) }</details></th>)
             }
           </tr>
         </thead>
