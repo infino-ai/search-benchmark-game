@@ -173,5 +173,9 @@ if __name__ == "__main__":
     # What produced these numbers: corpus, query set, and when the run started.
     # Never fatal — see run_provenance.py.
     run = run_provenance.collect(query_path, COMMANDS, started_utc)
-    with open("results.json" , "w") as f:
+    # RESULTS_PATH lets a run write somewhere other than results.json, which is
+    # a tracked file holding the nightly's own output. A run that writes through
+    # it and renames afterwards leaves that file deleted in the working tree.
+    results_path = os.environ.get("RESULTS_PATH", "results.json")
+    with open(results_path, "w") as f:
         json.dump({ "run": run, "details": details, "index_sizes": index_sizes, "results": results }, f, default=lambda obj: obj.__dict__)

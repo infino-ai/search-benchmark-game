@@ -63,7 +63,16 @@ function headlineSummary(data) {
   const modes = Object.keys(data.results);
   if (modes.length === 0) return null;
   const engines = Object.keys(data.results[modes[0]]);
-  const luceneKey = engines.find(e => e.toLowerCase().indexOf("lucene") >= 0);
+  // The baseline column, in order of authority: named by the run, else the
+  // lucene-named column (which is only correct by convention), else none.
+  // A single-engine page has no baseline at all: a column normalised against
+  // itself is 1.00 everywhere and says nothing, so such a page reports
+  // absolute times instead.
+  const declared = (data.run || {}).baseline;
+  const luceneKey = engines.length < 2
+    ? undefined
+    : (engines.includes(declared) ? declared
+       : engines.find(e => e.toLowerCase().indexOf("lucene") >= 0));
 
   // avg[engine][mode] = shape AVERAGE latency (undefined if any query unsupported).
   const avg = {};
@@ -153,15 +162,25 @@ function meanCell(searchR, countR, isBase, key) {
   );
 }
 
+// Microseconds, as the absolute-time cells render them.
+function usCell(v, key) {
+  return <td key={key} className="hl-num">{v === undefined ? "—" : numberWithCommas(Math.round(v)) + " \u00b5s"}</td>;
+}
+
 function Headline({ data }) {
   const summary = headlineSummary(data);
   if (!summary) return null;
-  const { modes, ratio, summarySearch, summaryCount, luceneKey } = summary;
+  const { modes, ratio, avg, summarySearch, summaryCount, luceneKey } = summary;
   const engines = orderEngines(summary.engines);
+  // With no baseline there is nothing to be relative to, so the table carries
+  // the average latency per shape instead of a ratio.
+  const absolute = luceneKey === undefined;
   return (
     <div className="headline">
       <div className="headline-title">
-        Latency relative to Lucene = 1.00 <span className="headline-hint">(&gt;1 = slower; per shape, then mean split into search top-k and count)</span>
+        {absolute
+          ? <>Average latency per query shape <span className="headline-hint">(no baseline column to normalise against, so these are absolute)</span></>
+          : <>Latency relative to {luceneKey} = 1.00 <span className="headline-hint">(&gt;1 = slower; per shape, then mean split into search top-k and count)</span></>}
       </div>
       <table className="headline-table">
         <thead>
@@ -176,13 +195,17 @@ function Headline({ data }) {
           {modes.map(mode => (
             <tr key={"r-" + mode}>
               <td className="hl-engine">{mode}</td>
-              {engines.map(engine => ratioCell(ratio[engine][mode], engine === luceneKey, "", engine + "-" + mode))}
+              {engines.map(engine => absolute
+                ? usCell(avg[engine][mode], engine + "-" + mode)
+                : ratioCell(ratio[engine][mode], engine === luceneKey, "", engine + "-" + mode))}
             </tr>
           ))}
-          <tr className="hl-summary-row">
-            <td className="hl-engine">Mean<div className="hl-mean-sublabel">search / count</div></td>
-            {engines.map(engine => meanCell(summarySearch[engine], summaryCount[engine], engine === luceneKey, "s-" + engine))}
-          </tr>
+          {absolute ? null : (
+            <tr className="hl-summary-row">
+              <td className="hl-engine">Mean<div className="hl-mean-sublabel">search / count</div></td>
+              {engines.map(engine => meanCell(summarySearch[engine], summaryCount[engine], engine === luceneKey, "s-" + engine))}
+            </tr>
+          )}
         </tbody>
       </table>
     </div>
@@ -281,8 +304,10 @@ function IndexSize({ data }) {
       <div className="headline-note">
         Note: infino’s on-disk index is a single columnar superfile that stores
         the original <code>text</code> column for retrieval <em>in addition to</em>
-        the full-text index. The other engines here index the text without
-        storing it, so their size is index-only.
+        the full-text index.
+        {engines.length > 1
+          ? " The other engines here index the text without storing it, so their size is index-only."
+          : null}
       </div>
     </div>
   );
