@@ -33,3 +33,7 @@ engines/**/.settings
 pgo/
 cs_pgo/
 .infino/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
