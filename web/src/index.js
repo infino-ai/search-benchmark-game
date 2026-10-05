@@ -194,6 +194,45 @@ function Headline({ data }) {
 // order as the headline; two rows — absolute size and size relative to
 // Lucene (Lucene = 1.00, >1 = larger). Renders nothing for runs whose
 // results.json predates index-size recording.
+// What produced this page: corpus, document count, query set, and when it ran.
+// Renders nothing for runs whose results.json predates this block, which is
+// every file committed before it existed.
+//
+// Styling rides the existing .headline / .details classes plus inline spacing,
+// so the committed stylesheet needs no change and only the script bundle has
+// to be rebuilt for this to appear.
+function RunProvenance({ data }) {
+  const run = data.run;
+  if (!run || run.error) return null;
+  const rows = [];
+  if (run.corpus) {
+    const c = run.corpus;
+    const parts = [c.name];
+    if (c.docs != null) parts.push(numberWithCommas(c.docs) + " documents");
+    if (c.bytes != null) parts.push(formatBytes(c.bytes));
+    rows.push(["Corpus", parts.join(", ")]);
+  }
+  if (run.queries && run.queries.name) {
+    rows.push(["Queries", run.queries.count != null
+      ? numberWithCommas(run.queries.count) + " (" + run.queries.name + ")"
+      : run.queries.name]);
+  }
+  if (run.started_utc) {
+    rows.push(["Run", run.started_utc.replace("T", " ").replace("+00:00", "") + " UTC"]);
+  }
+  if (rows.length === 0) return null;
+  return (
+    <div className="headline" style={{ marginTop: "2rem", marginBottom: "2.5rem" }}>
+      <div className="headline-title">What produced this page</div>
+      <ul className="details">
+        {rows.map(([label, value]) => (
+          <li key={"run-" + label}><b>{label}:</b> {value}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function IndexSize({ data }) {
   const sizes = data.index_sizes;
   if (!sizes || Object.keys(sizes).length === 0) return null;
@@ -273,7 +312,7 @@ function stats_row(engines, name, className, stat) {
 function details_list(engine_details) {
   return <ul className="details">
     {
-      engine_details.map(detail => {
+      (engine_details || []).map(detail => {
         return <li>{detail}</li>;
       })
     }
@@ -400,6 +439,7 @@ class Benchmark extends React.Component {
     return <div>
       <Headline data={this.props.data} />
       <IndexSize data={this.props.data} />
+      <RunProvenance data={this.props.data} />
       <form>
         <fieldset>
           <label htmlFor="collectionField">Collection type</label>

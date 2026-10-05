@@ -97,7 +97,11 @@ NUM_ITER = int(os.environ.get('NUM_ITER', '10'))
 
 if __name__ == "__main__":
     import sys
+    import run_provenance
     random.seed(2)
+    # Stamped before the first engine starts, so it dates the run rather than
+    # the moment the results happened to be written.
+    started_utc = run_provenance.utc_now()
     query_path = sys.argv[1]
     engines = sys.argv[2:]
     queries = list(read_queries(query_path))
@@ -166,5 +170,8 @@ if __name__ == "__main__":
             search_client.close()
         print(results_commands.keys())
         results[command] = results_commands
+    # What produced these numbers: corpus, query set, and when the run started.
+    # Never fatal — see run_provenance.py.
+    run = run_provenance.collect(query_path, COMMANDS, started_utc)
     with open("results.json" , "w") as f:
-        json.dump({ "details": details, "index_sizes": index_sizes, "results": results }, f, default=lambda obj: obj.__dict__)
+        json.dump({ "run": run, "details": details, "index_sizes": index_sizes, "results": results }, f, default=lambda obj: obj.__dict__)
