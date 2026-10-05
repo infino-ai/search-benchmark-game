@@ -6,11 +6,11 @@
 //! the schema / FTS column / tokenizer / pool config here guarantees they
 //! agree.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use arrow_schema::{DataType, Field, Schema};
-use infino::storage::StorageProvider;
+use infino::storage::{GcsStorageProvider, LocalFsStorageProvider, StorageProvider};
 use infino::superfile::builder::FtsConfig;
 use infino::supertable::manifest::list::PartitionStrategy;
 use infino::supertable::reader_cache::{DiskCacheConfig, DiskCacheStore};
@@ -37,10 +37,38 @@ pub fn schema() -> Arc<Schema> {
 /// little slower but stays well within 16 GiB. A post-ingest `optimize`
 /// (see `build_index`) then compacts every segment into one superfile.
 pub fn writer_threads() -> usize {
+    // A scale run on a large host wants more; INFINO_BENCH_WRITER_THREADS
+    // overrides. The pool is not part of the options digest, so changing it
+    // never stops an existing index from opening.
+    if let Some(n) = std::env::var("INFINO_BENCH_WRITER_THREADS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+    {
+        return n;
+    }
     std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4)
         .min(4)
+}
+
+/// Storage for `target`: `gs://bucket/prefix` keeps the superfiles in object
+/// storage with local disk as cache only; anything else is a filesystem path.
+///
+/// GCS credentials resolve through the ambient instance metadata chain, so the
+/// host's service account is what grants access and nothing is read from the
+/// process environment.
+pub fn storage_for(target: &str) -> Arc<dyn StorageProvider> {
+    match target.strip_prefix("gs://") {
+        Some(rest) => {
+            let (bucket, prefix) = rest.split_once('/').unwrap_or((rest, ""));
+            Arc::new(
+                GcsStorageProvider::new_with_prefix(bucket, prefix, &HashMap::new())
+                    .expect("build GCS storage provider"),
+            )
+        }
+        None => Arc::new(LocalFsStorageProvider::new(target).expect("open local storage")),
+    }
 }
 
 /// Options shared by builder and reader.
@@ -67,7 +95,24 @@ pub fn options(storage: Arc<dyn StorageProvider>) -> SupertableOptions {
     let disk_cache = DiskCacheStore::new(
         Arc::clone(&storage),
         DiskCacheConfig {
-            cache_root: std::env::temp_dir().join("infino-bench-disk-cache"),
+            cache_root: std::env::var("INFINO_BENCH_CACHE_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| std::env::temp_dir().join("infino-bench-disk-cache")),
+            // A scale index is far larger than RAM, so the cache holds it on
+            // local disk and the OS page cache decides residency.
+            disk_budget_bytes: std::env::var("INFINO_BENCH_CACHE_BUDGET_GB")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .map(|gb| gb * 1024 * 1024 * 1024)
+                .unwrap_or(DiskCacheConfig::default().disk_budget_bytes),
+            // No idle MADV_DONTNEED sweep while benching: it would inject
+            // cold-page spikes that belong to the sweeper, not the engine.
+            mmap_cold_threshold_secs: 0,
+            // Verifying the CRC of every cached superfile at open costs tens of
+            // minutes on a multi-terabyte index.
+            verify_crc_on_open: std::env::var("INFINO_BENCH_VERIFY_CRC")
+                .map(|v| v != "0")
+                .unwrap_or(true),
             ..Default::default()
         },
         Arc::new(HashSet::new),

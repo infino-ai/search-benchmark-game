@@ -120,12 +120,16 @@ def merge(main_full: dict, branch_full: dict, engine_key: str, label: str) -> di
     return main_full
 
 
-def render_index(template_html: str, label: str) -> str:
-    """Adapt the prebuilt /full page for one extra directory level + retitle."""
-    # /full sits one level under the site root and references `../static/...`.
-    # The fork page sits at `<fork_user>/full`, one level deeper, so bump every
-    # relative asset path up an extra directory.
-    html = template_html.replace("../static/", "../../static/")
+def render_index(template_html: str, label: str, extra_depth: int = 1) -> str:
+    """Adapt the prebuilt /full page for deeper nesting + retitle.
+
+    /full sits one level under the site root and references `../static/...`.
+    A page nested deeper needs one `../` per extra level: `<fork>/full` is one
+    deeper, `<fork>/<corpus>/<scale>/full` is three. Getting this wrong costs
+    the page its stylesheet and script, so the depth is computed from the
+    output path rather than assumed.
+    """
+    html = template_html.replace("../static/", "../" * (extra_depth + 1) + "static/")
     html = re.sub(
         r"<title>.*?</title>",
         f"<title>Search benchmark — {label}</title>",
@@ -147,6 +151,12 @@ def main() -> None:
     p.add_argument("--branch-full", required=True)
     p.add_argument("--template", required=True)
     p.add_argument("--out-dir", required=True)
+    p.add_argument(
+        "--site-root",
+        default="web/build",
+        help="site root the out-dir is nested under; the extra asset depth is "
+        "measured from it rather than assumed",
+    )
     p.add_argument("--label", required=True)
     args = p.parse_args()
 
@@ -167,7 +177,11 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     json.dump(merged, open(out_dir / "results.json", "w"))
-    index_html = render_index(Path(args.template).read_text(), args.label)
+    # `<fork>/full` is one level deeper than `/full`; `<fork>/<corpus>/<scale>/full`
+    # is three. Measured, not assumed.
+    out_parts = Path(args.out_dir).resolve().relative_to(Path(args.site_root).resolve()).parts
+    extra_depth = max(0, len(out_parts) - 1)
+    index_html = render_index(Path(args.template).read_text(), args.label, extra_depth)
     (out_dir / "index.html").write_text(index_html)
 
     print(f"published {args.label} -> {out_dir}/ (engine column: {engine_key})")
