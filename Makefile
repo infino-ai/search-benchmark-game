@@ -95,8 +95,8 @@ bench-scale:
 	 INFINO_BENCH_CACHE_BUDGET_GB="$(CACHE_BUDGET_GB)" \
 	 INFINO_BENCH_VERIFY_CRC=0 \
 	 INFINO_BENCH_QUERY_MODE=disk \
+	 RESULTS_PATH=results-$(CORPUS_NAME)-$(SCALE).json \
 	 python3 src/client.py $(QUERIES) $(SCALE_ENGINES)
-	@mv results.json results-$(CORPUS_NAME)-$(SCALE).json
 	@echo "--- Wrote results-$(CORPUS_NAME)-$(SCALE).json ---"
 
 compile:
