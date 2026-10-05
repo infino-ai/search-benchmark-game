@@ -108,8 +108,19 @@ public class BuildIndex {
 			for (Thread thread : threads) {
 				thread.join();
 			}
-			System.out.println("Merge");
-			writer.forceMerge(1, true);
+			// The standard benchmark force-merges to one segment so every engine
+			// is compared in the same shape. At scale that is both the wrong
+			// shape and an impractical one: a billion-document index is
+			// terabytes, forceMerge needs roughly double that free transiently,
+			// and no engine it is compared against is being held to a single
+			// segment at that size. LUCENE_FORCE_MERGE=0 leaves the segments as
+			// the merge policy made them.
+			if ("0".equals(System.getenv("LUCENE_FORCE_MERGE"))) {
+				System.out.println("Skipping force merge (LUCENE_FORCE_MERGE=0)");
+			} else {
+				System.out.println("Merge");
+				writer.forceMerge(1, true);
+			}
 		}
 	}
 }
