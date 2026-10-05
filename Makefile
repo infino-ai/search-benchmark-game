@@ -87,6 +87,9 @@ bench-scale:
 	@case "$(SCALE)" in 1M|100M|1B|10B|100B|1T) ;; \
 	  *) echo "SCALE must be one of 1M 100M 1B 10B 100B 1T (got '$(SCALE)')"; exit 1 ;; esac
 	@echo "--- Benchmarking $(CORPUS_NAME) at $(SCALE) against $(INDEX_URI) ---"
+	@# The index is not on local disk, so its size has to be asked for rather
+	@# than measured. Failure is fine: the page omits what it does not know.
+	$(eval INDEX_BYTES := $(shell case "$(INDEX_URI)" in gs://*) gsutil du -s "$(INDEX_URI)" 2>/dev/null | awk '{print $$1}' ;; esac))
 	@rm -fr results && mkdir results
 	@INFINO_BENCH_INDEX_URI="$(INDEX_URI)" \
 	 INFINO_BENCH_CORPUS_NAME="$(CORPUS_NAME)" \
@@ -96,6 +99,7 @@ bench-scale:
 	 INFINO_BENCH_VERIFY_CRC=0 \
 	 INFINO_BENCH_QUERY_MODE=disk \
 	 RESULTS_PATH=results-$(CORPUS_NAME)-$(SCALE).json \
+	 INFINO_BENCH_INDEX_BYTES="$(INDEX_BYTES)" \
 	 python3 src/client.py $(QUERIES) $(SCALE_ENGINES)
 	@echo "--- Wrote results-$(CORPUS_NAME)-$(SCALE).json ---"
 

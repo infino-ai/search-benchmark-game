@@ -121,9 +121,21 @@ if __name__ == "__main__":
     # Record each engine's built-index size so the comparison table can
     # show the storage cost alongside latency. Indexing runs before the
     # bench, so `engines/<engine>/idx` exists here.
+    # A scale run's index is not under engines/<engine>/idx at all: it lives
+    # wherever INFINO_BENCH_INDEX_URI points, typically object storage. The
+    # local path is then either absent or — worse — a stale symlink to some
+    # earlier run's index, which measures confidently and reports the wrong
+    # number. So a declared size wins whenever the local path cannot be read.
+    declared = os.environ.get("INFINO_BENCH_INDEX_BYTES")
     index_sizes = {}
     for engine in engines:
-      index_sizes[engine] = index_size_bytes(path.join(dirname, engine, "idx"))
+      measured = index_size_bytes(path.join(dirname, engine, "idx"))
+      if measured is None and declared:
+        try:
+          measured = int(declared)
+        except ValueError:
+          measured = None
+      index_sizes[engine] = measured
 
     results = {}
     for command in COMMANDS:
