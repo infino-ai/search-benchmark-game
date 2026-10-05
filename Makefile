@@ -64,6 +64,37 @@ bench-full:
 	@python3 src/client.py $(QUERIES) $(ENGINES)
 	@mv results.json results-full.json
 
+# A scale run queries an index that already exists on object storage, rather
+# than building one: at a billion documents the index is terabytes and takes
+# hours to build, so it is built once out of band and served many times.
+#
+#   make bench-scale \
+#       INDEX_URI=gs://<bucket>/<prefix> \
+#       CACHE_DIR=/<local disk>/<cache> \
+#       CORPUS_NAME=webcrawl SCALE=1B
+#
+# INDEX_URI is the store of record. CACHE_DIR is a local disk cache in front of
+# it and holds no authority: deleting it costs fetches, never data.
+SCALE_ENGINES ?= infino-branch
+CACHE_BUDGET_GB ?= 4096
+
+bench-scale: QUERIES := queries-full.txt
+bench-scale: COMMANDS := TOP_10 TOP_100 TOP_1000 TOP_100_COUNT COUNT
+bench-scale:
+	@test -n "$(INDEX_URI)" || { echo "INDEX_URI is required (e.g. gs://bucket/prefix)"; exit 1; }
+	@test -n "$(CORPUS_NAME)" || { echo "CORPUS_NAME is required (e.g. webcrawl)"; exit 1; }
+	@test -n "$(SCALE)" || { echo "SCALE is required (e.g. 1B)"; exit 1; }
+	@echo "--- Benchmarking $(CORPUS_NAME) at $(SCALE) against $(INDEX_URI) ---"
+	@rm -fr results && mkdir results
+	@INFINO_BENCH_INDEX_URI="$(INDEX_URI)" \
+	 INFINO_BENCH_CACHE_DIR="$(CACHE_DIR)" \
+	 INFINO_BENCH_CACHE_BUDGET_GB="$(CACHE_BUDGET_GB)" \
+	 INFINO_BENCH_VERIFY_CRC=0 \
+	 INFINO_BENCH_QUERY_MODE=disk \
+	 python3 src/client.py $(QUERIES) $(SCALE_ENGINES)
+	@mv results.json results-$(CORPUS_NAME)-$(SCALE).json
+	@echo "--- Wrote results-$(CORPUS_NAME)-$(SCALE).json ---"
+
 compile:
 	@echo "--- Compiling binaries ---"
 	@for engine in $(ENGINES); do cd ${shell pwd}/engines/$$engine && make compile || exit 1; done

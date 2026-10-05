@@ -1,3 +1,9 @@
+# INFINO_BENCH_INDEX_URI names an index that already exists (a local path or
+# gs://bucket/prefix). When it is set, `index` has nothing to do: a scale index
+# is built once, out of band, and served many times. When it is unset the
+# engine builds `idx` from $(CORPUS) as it always has.
+EXTERNAL_INDEX := $(INFINO_BENCH_INDEX_URI)
+
 clean:
 	rm -fr idx
 	rm -fr target
@@ -8,13 +14,24 @@ target/release/build_index target/release/do_query &:
 	@echo "\n\n\n--- Building infino's binary ---" >&2
 	@RUSTFLAGS='-C target-cpu=native' cargo build --release --bin build_index --bin do_query
 
+ifdef EXTERNAL_INDEX
+
+index: target/release/do_query
+	@echo "--- infino: serving the existing index at $(EXTERNAL_INDEX); nothing to build ---" >&2
+
+serve: target/release/do_query
+	@target/release/do_query "$(EXTERNAL_INDEX)"
+
+else
+
 index: idx
 
 serve: target/release/do_query
 	@target/release/do_query idx
 
-
 idx: target/release/build_index
 	@echo "\n\n\n---- Indexing infino ----"
 	@mkdir -p idx
 	@target/release/build_index idx < ${CORPUS}
+
+endif

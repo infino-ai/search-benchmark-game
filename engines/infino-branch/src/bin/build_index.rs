@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use arrow_array::{LargeStringArray, RecordBatch};
-use infino::storage::{LocalFsStorageProvider, StorageProvider};
+use infino::storage::StorageProvider;
 use infino::supertable::Supertable;
 use infino::{CompactionSettings, GcSettings, OptimizeOptions};
 use serde::Deserialize;
@@ -30,8 +30,10 @@ struct Doc {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let storage: Arc<dyn StorageProvider> =
-        Arc::new(LocalFsStorageProvider::new(&args[1]).expect("open local storage"));
+    // Same resolution as do_query, so the two agree on where the index lives
+    // as well as on the options they stamp into it.
+    let target = env::var("INFINO_BENCH_INDEX_URI").unwrap_or_else(|_| args[1].clone());
+    let storage: Arc<dyn StorageProvider> = infino_bench::storage_for(&target);
     let st = Supertable::create(infino_bench::options(storage)).expect("create supertable");
     let mut writer = st.writer().expect("acquire writer");
     let schema = infino_bench::schema();
