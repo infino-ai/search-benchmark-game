@@ -84,9 +84,13 @@ bench-scale:
 	@test -n "$(INDEX_URI)" || { echo "INDEX_URI is required (e.g. gs://bucket/prefix)"; exit 1; }
 	@test -n "$(CORPUS_NAME)" || { echo "CORPUS_NAME is required (e.g. webcrawl)"; exit 1; }
 	@test -n "$(SCALE)" || { echo "SCALE is required (e.g. 1B)"; exit 1; }
+	@case "$(SCALE)" in 1M|100M|1B|10B|100B|1T) ;; \
+	  *) echo "SCALE must be one of 1M 100M 1B 10B 100B 1T (got '$(SCALE)')"; exit 1 ;; esac
 	@echo "--- Benchmarking $(CORPUS_NAME) at $(SCALE) against $(INDEX_URI) ---"
 	@rm -fr results && mkdir results
 	@INFINO_BENCH_INDEX_URI="$(INDEX_URI)" \
+	 INFINO_BENCH_CORPUS_NAME="$(CORPUS_NAME)" \
+	 INFINO_BENCH_SCALE="$(SCALE)" \
 	 INFINO_BENCH_CACHE_DIR="$(CACHE_DIR)" \
 	 INFINO_BENCH_CACHE_BUDGET_GB="$(CACHE_BUDGET_GB)" \
 	 INFINO_BENCH_VERIFY_CRC=0 \
