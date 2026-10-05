@@ -18,6 +18,18 @@ from datetime import datetime, timezone
 from os import path
 
 
+# Scale shorthand to a document count. One table, so the URL segment and the
+# number of documents cannot disagree.
+SCALES = {
+    "1M": 1_000_000,
+    "100M": 100_000_000,
+    "1B": 1_000_000_000,
+    "10B": 10_000_000_000,
+    "100B": 100_000_000_000,
+    "1T": 1_000_000_000_000,
+}
+
+
 def _line_count(file_path):
     """Documents in a corpus, or queries in a query set: one per line."""
     try:
@@ -38,6 +50,25 @@ def run_provenance(query_path, commands, started_utc):
     }
     if commands:
         run["commands"] = list(commands)
+
+    # A scale run queries an index that already exists, so there is no
+    # corpus.json to measure: the corpus is named rather than counted, and the
+    # document count comes from the scale that built it. Counting lines of
+    # whatever CORPUS happens to point at would be wrong here, and on a
+    # compressed file it is not even a document count.
+    index_uri = os.environ.get("INFINO_BENCH_INDEX_URI")
+    if index_uri:
+        corpus = {"index": index_uri}
+        name = os.environ.get("INFINO_BENCH_CORPUS_NAME")
+        if name:
+            corpus["name"] = name
+        scale = os.environ.get("INFINO_BENCH_SCALE")
+        if scale:
+            corpus["scale"] = scale
+            if scale in SCALES:
+                corpus["docs"] = SCALES[scale]
+        run["corpus"] = corpus
+        return run
 
     corpus_path = os.environ.get("CORPUS")
     if corpus_path:
