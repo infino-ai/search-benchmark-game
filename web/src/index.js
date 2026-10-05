@@ -195,32 +195,40 @@ function Headline({ data }) {
 // Lucene (Lucene = 1.00, >1 = larger). Renders nothing for runs whose
 // results.json predates index-size recording.
 // What produced this page: corpus, document count, query set, and when it ran.
-// Renders nothing for runs whose results.json predates provenance recording,
-// which is every file committed before it existed.
+// Renders nothing for runs whose results.json predates this block, which is
+// every file committed before it existed.
+//
+// Styling rides the existing .headline / .details classes plus inline spacing,
+// so the committed stylesheet needs no change and only the script bundle has
+// to be rebuilt for this to appear.
 function RunProvenance({ data }) {
   const run = data.run;
   if (!run || run.error) return null;
-  const bits = [];
+  const rows = [];
   if (run.corpus) {
     const c = run.corpus;
-    bits.push(c.docs != null
-      ? c.name + " \u00b7 " + numberWithCommas(c.docs) + " docs"
-      : c.name);
+    const parts = [c.name];
+    if (c.docs != null) parts.push(numberWithCommas(c.docs) + " documents");
+    if (c.bytes != null) parts.push(formatBytes(c.bytes));
+    rows.push(["Corpus", parts.join(", ")]);
   }
   if (run.queries && run.queries.name) {
-    bits.push(run.queries.count != null
-      ? run.queries.count + " queries (" + run.queries.name + ")"
-      : run.queries.name);
+    rows.push(["Queries", run.queries.count != null
+      ? numberWithCommas(run.queries.count) + " (" + run.queries.name + ")"
+      : run.queries.name]);
   }
   if (run.started_utc) {
-    bits.push("run " + run.started_utc.replace("T", " ").replace("+00:00", " UTC"));
+    rows.push(["Run", run.started_utc.replace("T", " ").replace("+00:00", "") + " UTC"]);
   }
-  if (bits.length === 0) return null;
+  if (rows.length === 0) return null;
   return (
-    <div className="headline">
-      <div className="headline-title">
-        What produced this page <span className="headline-hint">{bits.join(" \u00b7 ")}</span>
-      </div>
+    <div className="headline" style={{ marginTop: "2rem", marginBottom: "2.5rem" }}>
+      <div className="headline-title">What produced this page</div>
+      <ul className="details">
+        {rows.map(([label, value]) => (
+          <li key={"run-" + label}><b>{label}:</b> {value}</li>
+        ))}
+      </ul>
     </div>
   );
 }
