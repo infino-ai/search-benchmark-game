@@ -3,6 +3,8 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import org.apache.lucene.analysis.CharArraySet;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
@@ -20,11 +22,42 @@ import org.apache.lucene.search.similarities.BM25Similarity;
 import org.apache.lucene.store.FSDirectory;
 
 public class DoQuery {
+    /** Threads for one query, from BENCH_QUERY_THREADS. Default 1: no executor. */
+    private static int queryThreads() {
+        final String raw = System.getenv("BENCH_QUERY_THREADS");
+        if (raw == null || raw.isEmpty()) {
+            return 1;
+        }
+        try {
+            return Math.max(1, Integer.parseInt(raw.trim()));
+        } catch (NumberFormatException e) {
+            return 1;
+        }
+    }
+
     public static void main(String[] args) throws IOException, ParseException {
         final Path indexDir = Paths.get(args[0]);
         try (IndexReader reader = DirectoryReader.open(FSDirectory.open(indexDir));
                 BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(System.in))) {
-            final IndexSearcher searcher = new IndexSearcher(reader);
+            // BENCH_QUERY_THREADS>1 gives the searcher an executor, so one query
+            // is answered across the index's segments in parallel. Unset or 1 —
+            // which is the nightly — the searcher has no executor and works on
+            // the calling thread, exactly as before.
+            //
+            // A scale run wants the parallel form: a machine answering queries
+            // over a billion documents uses the cores it has, and measuring one
+            // core of a 44-core host describes nothing anyone would deploy.
+            final int queryThreads = queryThreads();
+            final ExecutorService executor =
+                    queryThreads > 1 ? Executors.newFixedThreadPool(queryThreads, r -> {
+                        Thread t = new Thread(r);
+                        t.setDaemon(true);
+                        return t;
+                    }) : null;
+            final IndexSearcher searcher =
+                    executor == null ? new IndexSearcher(reader) : new IndexSearcher(reader, executor);
+            System.err.println("lucene: query threads = " + (executor == null ? 1 : queryThreads)
+                    + ", segments = " + reader.leaves().size());
             searcher.setQueryCache(null);
             searcher.setSimilarity(new BM25Similarity(0.9f, 0.4f));
             final QueryParser queryParser = new QueryParser("text", new StandardAnalyzer(CharArraySet.EMPTY_SET));

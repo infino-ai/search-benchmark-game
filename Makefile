@@ -77,6 +77,9 @@ bench-full:
 # it and holds no authority: deleting it costs fetches, never data.
 SCALE_ENGINES ?= infino-branch
 CACHE_BUDGET_GB ?= 4096
+# A scale run uses the host's cores for one query. The nightly does not set
+# this and stays single-threaded, which is what its comparison is built on.
+QUERY_THREADS ?= $(shell nproc 2>/dev/null || echo 1)
 
 bench-scale: QUERIES := queries-full.txt
 bench-scale: COMMANDS := TOP_10 TOP_100 TOP_1000 TOP_100_COUNT COUNT
@@ -98,6 +101,7 @@ bench-scale:
 	 INFINO_BENCH_CACHE_BUDGET_GB="$(CACHE_BUDGET_GB)" \
 	 INFINO_BENCH_VERIFY_CRC=0 \
 	 INFINO_BENCH_QUERY_MODE=disk \
+	 BENCH_QUERY_THREADS=$(QUERY_THREADS) \
 	 RESULTS_PATH=results-$(CORPUS_NAME)-$(SCALE).json \
 	 INFINO_BENCH_INDEX_BYTES="$(INDEX_BYTES)" \
 	 python3 src/client.py $(QUERIES) $(SCALE_ENGINES)
