@@ -45,3 +45,33 @@ make bench
 You're done, make sure to note the Java / Rust / kernel versions and copy the
 results.json file on another machine before shutting this one down.
 
+
+## The nightly bench box
+
+The nightly workflow (`.github/workflows/nightly-bench.yml`) runs on a
+throwaway GCP `c3-highcpu-8` in `infino-dev-ci`, created and deleted per run.
+It can be switched back to the original AWS `c7i.2xlarge` by dispatching with
+`cloud: aws`; see README's benchmark-environment section for why the two are
+not interchangeable for absolute numbers.
+
+The split is deliberate and worth keeping:
+
+- `scripts/bench-cloud.sh` — everything the **runner** does (launch, poll,
+  fetch, tear down), dispatching on `$BENCH_CLOUD`.
+- `scripts/cloud-shim-{gcp,aws}.sh` — everything the **box** does that differs
+  (packages, object storage, the done-signal).
+- `scripts/user-data-template.sh` — the bench itself, cloud-neutral. A change
+  to how the bench runs belongs here and needs no cloud-specific edit.
+
+One-time GCP setup is `scripts/provision-gcp.sh` (idempotent; re-run it to
+check the project still matches).
+
+The bench bucket holds a prebuilt `corpus.json` so every run indexes identical
+input. A fresh bucket does not need seeding by hand: the first run finds the
+object missing, builds the corpus from the public source and uploads it, which
+costs that one run about half an hour. To skip that, seed it first:
+
+```bash
+make corpus                                        # downloads + transforms; slow
+gcloud storage cp corpus.json gs://sbg-bench-corpus/corpus.json
+```

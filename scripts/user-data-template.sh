@@ -1,48 +1,51 @@
 #!/bin/bash
-# EC2 bootstrap for nightly CI bench.
-# __GH_TOKEN__ is substituted by the GitHub Actions workflow at launch time.
+# Bench-box bootstrap for the nightly CI bench.
+#
+# Cloud-neutral: everything that differs between clouds lives in
+# scripts/cloud-shim-{gcp,aws}.sh, which the workflow splices in at the
+# shim marker below. The __*__ run parameters are substituted by the GitHub
+# Actions workflow at launch time.
 exec >> /var/log/sbg-bench.log 2>&1
 
-REGION="us-east-1"
-BUCKET="sbg-bench-corpus"
-DONE_PARAM="/sbg-bench/done"
-EC2_HOME="/home/ec2-user"
+mkdir -p /run/sbg
 
-signal_done() {
-  # upload log to S3 first so failures are always inspectable
-  aws s3 cp /var/log/sbg-bench.log "s3://$BUCKET/bench-log.txt" \
-    --region "$REGION" 2>/dev/null || true
-  aws ssm put-parameter \
-    --name "$DONE_PARAM" \
-    --value "$1" \
-    --type String \
-    --overwrite \
-    --region "$REGION" 2>/dev/null || true
-}
+# The shim is written to a file rather than inlined so that bench.sh — which
+# runs as the unprivileged bench user, not root — can source the same
+# definitions for its corpus fetch and results upload.
+cat > /run/sbg/cloud-shim.sh << 'SHIM_EOF'
+__CLOUD_SHIM__
+SHIM_EOF
+chmod 644 /run/sbg/cloud-shim.sh
+source /run/sbg/cloud-shim.sh
 
+signal_done() { cloud_signal "$1"; }
 trap 'echo "=== disk usage at exit ==="; df -h; signal_done error' EXIT
 
-# system deps (gradle needs unzip; bzip2 for corpus fallback). docker is needed
-# by the iresearch (SereneDB) engine, whose build runs in a container (clang-21)
-# — see RUNNING.md and engines/iresearch-26.03.1/Makefile.
-dnf install -y git make gcc gcc-c++ cmake clang bzip2 python3 unzip wget docker
-usermod -aG docker ec2-user
-systemctl enable --now docker
+cloud_install_deps
+
+# The bench user pre-exists on some images (ec2-user) and not others.
+id -u "$BENCH_USER" &>/dev/null || useradd -m "$BENCH_USER"
+usermod -aG docker "$BENCH_USER"
+BENCH_HOME=$(getent passwd "$BENCH_USER" | cut -d: -f6)
 
 # write the GitHub token to tmpfs so bench.sh can read it for git clone
-mkdir -p /run/sbg
 printf '%s' '__GH_TOKEN__' > /run/sbg/gh-token
-chmod 644 /run/sbg/gh-token   # ec2-user needs to read this
+chmod 644 /run/sbg/gh-token   # the bench user needs to read this
 
 # write per-user bench script
 cat > /tmp/bench.sh << 'BENCH_EOF'
 #!/bin/bash
 set -euo pipefail
 
-# Index-build spill scratch goes to $TMPDIR. The AMI mounts /tmp on tmpfs
-# (sized to half of RAM — 8 GiB here), which a positional index build
-# overflows, and tmpfs pages compete with the writer's own memory. Point
-# scratch at the EBS volume instead.
+source /run/sbg/cloud-shim.sh
+
+# Index builds open far more files than a stock limit allows (they die with
+# TooManyOpenFiles). The shim raises the hard limit where the distro needs it.
+ulimit -n 65535 || true
+
+# Index-build spill scratch goes to $TMPDIR. Where /tmp is a tmpfs it is sized
+# to a fraction of RAM, which a positional index build overflows, and tmpfs
+# pages compete with the writer's own memory. Point scratch at the data disk.
 mkdir -p "$HOME/tmp"
 export TMPDIR="$HOME/tmp"
 
@@ -126,8 +129,19 @@ fi
 
 cd "$HOME/search-benchmark-game"
 
-# corpus from S3
-aws s3 cp "s3://sbg-bench-corpus/corpus.json" corpus.json
+# The bench bucket holds a prebuilt corpus so every run indexes byte-identical
+# input. If it is missing — a freshly provisioned bucket — build it from the
+# public source and publish it, so the next run is fast and gets exactly these
+# bytes. Self-seeding beats a manual setup step that is only ever done once and
+# is therefore always forgotten.
+if cloud_get corpus.json corpus.json; then
+  echo "corpus: fetched from the bench bucket"
+else
+  echo "corpus: NOT in the bench bucket — building from source and seeding it."
+  echo "corpus: this adds roughly half an hour to THIS run only."
+  make corpus
+  cloud_put corpus.json corpus.json
+fi
 
 # Engine selection:
 #   - same-box branch run (default): branch (infino-branch) + main baseline
@@ -161,20 +175,20 @@ make "${MAKE_ARGS[@]}" bench        # turbopuffer comparison  → results.json
 # only upload to canonical keys for the official repo on main; everything else
 # uses a run-specific key so nightly results are never clobbered
 if [ "$INFINO_BRANCH" = "main" ] && [ "$INFINO_REPO" = "infino-ai/infino" ]; then
-  aws s3 cp results.json      "s3://sbg-bench-corpus/results.json"
-  aws s3 cp results-full.json "s3://sbg-bench-corpus/results-full.json"
+  cloud_put results.json      results.json
+  cloud_put results-full.json results-full.json
 else
   RUN_SLUG="${INFINO_REPO//\//-}-${INFINO_BRANCH//\//-}"
-  aws s3 cp results.json      "s3://sbg-bench-corpus/results-branch-${RUN_SLUG}.json"
-  aws s3 cp results-full.json "s3://sbg-bench-corpus/results-full-branch-${RUN_SLUG}.json"
+  cloud_put results.json      "results-branch-${RUN_SLUG}.json"
+  cloud_put results-full.json "results-full-branch-${RUN_SLUG}.json"
 fi
 BENCH_EOF
 
 chmod +x /tmp/bench.sh
 
-# -H sets HOME to ec2-user's home (/home/ec2-user) so rustup, cargo, git
-# all install and resolve paths under the correct home directory
-if sudo -H -u ec2-user bash /tmp/bench.sh; then
+# -H sets HOME to the bench user's home so rustup, cargo and git all install
+# and resolve paths under the correct home directory
+if sudo -H -u "$BENCH_USER" bash /tmp/bench.sh; then
   trap - EXIT
   signal_done ok
 else
