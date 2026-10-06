@@ -52,6 +52,15 @@ pub fn writer_threads() -> usize {
         .min(4)
 }
 
+/// Threads for one query's CPU work, from `BENCH_QUERY_THREADS`. Default 1.
+pub fn query_threads() -> usize {
+    std::env::var("BENCH_QUERY_THREADS")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .map(|n| n.max(1))
+        .unwrap_or(1)
+}
+
 /// Storage for `target`: `gs://bucket/prefix` keeps the superfiles in object
 /// storage with local disk as cache only; anything else is a filesystem path.
 ///
@@ -85,9 +94,16 @@ pub fn options(storage: Arc<dyn StorageProvider>) -> SupertableOptions {
             .build()
             .expect("build writer pool"),
     );
+    // BENCH_QUERY_THREADS sizes the pool that runs a query's CPU work: page
+    // decode, scoring, rerank. Default 1 — which is the nightly — keeps the
+    // single-threaded measurement the standard benchmark is built around.
+    //
+    // A scale run sets it to the host's cores. A machine answering queries over
+    // a billion documents uses what it has, and one core of a 44-core host
+    // describes nothing anyone would deploy.
     let reader_pool = Arc::new(
         rayon::ThreadPoolBuilder::new()
-            .num_threads(1)
+            .num_threads(query_threads())
             .build()
             .expect("build reader pool"),
     );
