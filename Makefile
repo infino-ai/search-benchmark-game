@@ -89,7 +89,7 @@ bench-scale:
 	@echo "--- Benchmarking $(CORPUS_NAME) at $(SCALE) against $(INDEX_URI) ---"
 	@# The index is not on local disk, so its size has to be asked for rather
 	@# than measured. Failure is fine: the page omits what it does not know.
-	$(eval INDEX_BYTES := $(shell case "$(INDEX_URI)" in gs://*) gsutil du -s "$(INDEX_URI)" 2>/dev/null | awk '{print $$1}' ;; esac))
+	$(eval INDEX_BYTES := $(if $(filter gs://%,$(INDEX_URI)),$(shell gsutil du -s "$(INDEX_URI)" 2>/dev/null | awk '{print $$1}')))
 	@rm -fr results && mkdir results
 	@INFINO_BENCH_INDEX_URI="$(INDEX_URI)" \
 	 INFINO_BENCH_CORPUS_NAME="$(CORPUS_NAME)" \
