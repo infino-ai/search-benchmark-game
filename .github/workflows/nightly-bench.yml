@@ -1,7 +1,15 @@
 name: Nightly benchmark
 
-# Runs the full turbopuffer-comparison bench on a c7i.2xlarge, commits
-# results.json to master, and lets the existing pages.yml publish the dashboard.
+# Runs the full turbopuffer-comparison bench on a dedicated 8 vCPU / 16 GiB
+# Sapphire Rapids box, commits results.json to master, and lets the existing
+# pages.yml publish the dashboard.
+#
+# The box is a GCP c3-highcpu-8 by default. The AWS c7i.2xlarge the nightly
+# used to run on is still fully supported — dispatch with `cloud: aws` to get
+# it back. The two are the same CPU generation, core count and memory, but
+# they are not the same machine: see README's benchmark-environment section.
+# Everything cloud-specific lives in scripts/bench-cloud.sh (runner side) and
+# scripts/cloud-shim-{gcp,aws}.sh (box side), so this workflow stays one path.
 # The nightly benches two infino columns: `infino-0.8.9` (the published crate)
 # and `infino-main` (the tip of infino-ai/infino main).
 #
@@ -30,6 +38,12 @@ on:
         description: 'infino repo to bench, e.g. a public fork (default: infino-ai/infino)'
         default: 'infino-ai/infino'
         required: false
+      cloud:
+        description: 'Cloud to bench on. gcp = c3-highcpu-8 (default); aws = the original c7i.2xlarge.'
+        type: choice
+        options: [gcp, aws]
+        default: gcp
+        required: false
       same_box:
         description: 'Same-box A/B: bench lucene/tantivy alongside infino-branch + infino-main on one instance (variance-free branch-vs-main / branch-vs-lucene). Default on; off trims the run to the infino-branch column alone, compared cross-run against the committed baseline. Does not apply to a main run — infino-main already covers main.'
         type: boolean
@@ -37,15 +51,16 @@ on:
         required: false
 
 permissions:
-  id-token: write   # required for AWS OIDC
+  id-token: write   # keyless OIDC federation into GCP (or AWS)
   contents: read
 
 jobs:
   bench:
     runs-on: ubuntu-latest
     env:
-      AWS_REGION: us-east-1
-      CORPUS_BUCKET: sbg-bench-corpus
+      # The scheduled run passes no inputs, so this is where the nightly's
+      # default cloud is set; the input only overrides a dispatch.
+      BENCH_CLOUD: ${{ inputs.cloud || 'gcp' }}
       INFINO_BRANCH: ${{ inputs.infino_branch || 'main' }}
       INFINO_REPO: ${{ inputs.infino_repo || 'infino-ai/infino' }}
       # On by default (input default true); the nightly schedule has no inputs so
@@ -75,73 +90,55 @@ jobs:
           owner: infino-ai
           repositories: "search-benchmark-game,infino"
 
+      # Each cloud's credential step is necessarily its own; everything after
+      # this point is cloud-neutral and goes through scripts/bench-cloud.sh.
+      - name: Federate to GCP (Workload Identity — no stored keys)
+        if: env.BENCH_CLOUD == 'gcp'
+        uses: google-github-actions/auth@v2
+        with:
+          # Deliberately no `token_format: access_token`: that bakes a static
+          # token which, capped at one hour, would expire partway through the
+          # poll below and hang the run to its timeout despite a good bench
+          # (the exact failure the AWS path's role-duration override fixes).
+          # The default credentials file instead re-mints a GitHub OIDC
+          # assertion on every refresh, so it stays valid for the whole job.
+          workload_identity_provider: projects/309265046192/locations/global/workloadIdentityPools/github-pool/providers/search-benchmark-game
+          service_account: sbg-bench-ci@infino-dev-ci.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+        if: env.BENCH_CLOUD == 'gcp'
+
       - name: Configure AWS credentials (OIDC — no stored keys)
+        if: env.BENCH_CLOUD == 'aws'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::381491836522:role/sbg-ci
           aws-region: us-east-1
-          # The wait step polls SSM for the whole bench; the default 1 h
-          # OIDC session expires mid-run once a bench exceeds an hour, and
-          # get-parameter then fails silently -> the run hangs to the 3 h
-          # timeout despite a successful bench. Hold credentials past the
-          # 3 h wait timeout. (sbg-ci's max session duration must allow this.)
+          # The wait step polls for the whole bench; the default 1 h OIDC
+          # session expires mid-run once a bench exceeds an hour, and the poll
+          # then fails silently -> the run hangs to the timeout despite a
+          # successful bench. Hold credentials past the 3 h wait timeout.
+          # (sbg-ci's max session duration must allow this.)
           role-duration-seconds: 14400
 
       # Clean up any leftover done-signal from a previous failed run
       - name: Clear stale done-signal
-        run: |
-          aws ssm delete-parameter --name /sbg-bench/done --region us-east-1 2>/dev/null || true
+        run: scripts/bench-cloud.sh clear-signal
 
-      - name: Resolve latest AL2023 AMI and default security group
-        id: infra
-        run: |
-          AMI=$(aws ec2 describe-images \
-            --owners amazon \
-            --filters "Name=name,Values=al2023-ami-*-x86_64" \
-                      "Name=state,Values=available" \
-            --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
-            --output text)
-          echo "ami=$AMI" >> "$GITHUB_OUTPUT"
+      # Splice the chosen cloud's box shim into the template and substitute
+      # the run parameters. The script syntax-checks what it generates, so a
+      # broken box script fails here rather than silently on a booted VM.
+      - name: Build box startup script
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SBG_BRANCH: ${{ github.ref_name }}
+        run: scripts/bench-cloud.sh build-user-data /tmp/user-data.sh
 
-          VPC=$(aws ec2 describe-vpcs \
-            --filters "Name=isDefault,Values=true" \
-            --query 'Vpcs[0].VpcId' --output text)
-          SG=$(aws ec2 describe-security-groups \
-            --filters "Name=vpc-id,Values=$VPC" \
-                      "Name=group-name,Values=default" \
-            --query 'SecurityGroups[0].GroupId' --output text)
-          echo "sg=$SG" >> "$GITHUB_OUTPUT"
-
-      # Substitute the GitHub token, infino repo, and infino branch into the user-data template.
-      - name: Build user-data
-        id: userdata
+      - name: Launch bench instance
+        id: box
         run: |
-          sed \
-            -e "s|__GH_TOKEN__|${{ steps.app-token.outputs.token }}|g" \
-            -e "s|__INFINO_BRANCH__|${INFINO_BRANCH}|g" \
-            -e "s|__INFINO_REPO__|${INFINO_REPO}|g" \
-            -e "s|__SBG_BRANCH__|${{ github.ref_name }}|g" \
-            -e "s|__SAME_BOX__|${SAME_BOX}|g" \
-            scripts/user-data-template.sh > /tmp/user-data.sh
-          echo "b64=$(base64 -w0 /tmp/user-data.sh)" >> "$GITHUB_OUTPUT"
-
-      - name: Launch c7i.2xlarge bench instance
-        id: ec2
-        run: |
-          INSTANCE_ID=$(aws ec2 run-instances \
-            --image-id "${{ steps.infra.outputs.ami }}" \
-            --instance-type c7i.2xlarge \
-            --iam-instance-profile Name=sbg-bench-instance \
-            --security-group-ids "${{ steps.infra.outputs.sg }}" \
-            --user-data "${{ steps.userdata.outputs.b64 }}" \
-            --block-device-mappings \
-              '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":120,"VolumeType":"gp3"}}]' \
-            --tag-specifications \
-              'ResourceType=instance,Tags=[{Key=Name,Value=sbg-bench-nightly}]' \
-            --query 'Instances[0].InstanceId' \
-            --output text)
-          echo "id=$INSTANCE_ID" >> "$GITHUB_OUTPUT"
-          echo "Launched instance: $INSTANCE_ID"
+          HANDLE=$(scripts/bench-cloud.sh launch /tmp/user-data.sh)
+          echo "handle=$HANDLE" >> "$GITHUB_OUTPUT"
+          echo "Launched $BENCH_CLOUD bench box: $HANDLE"
 
       # Poll every 60 s; bench typically finishes in ~2 h.
       # GitHub-hosted jobs are hard-capped at 6 h, and a job killed by that
@@ -150,36 +147,13 @@ jobs:
       # normally and the instance is still terminated.
       - name: Wait for benchmark to complete (5 h 45 m timeout)
         timeout-minutes: 345
-        run: |
-          echo "Polling /sbg-bench/done every 60s …"
-          while true; do
-            # Distinguish "not set yet" (ParameterNotFound — keep polling)
-            # from any other failure (expired creds, throttle, API error).
-            # The old `2>/dev/null || echo pending` masked those and spun
-            # to the timeout on expired credentials; fail loudly here.
-            if OUT=$(aws ssm get-parameter \
-                --name /sbg-bench/done \
-                --query 'Parameter.Value' \
-                --output text 2>&1); then
-              STATUS="$OUT"
-            elif printf '%s' "$OUT" | grep -q "ParameterNotFound"; then
-              STATUS="pending"
-            else
-              echo "get-parameter failed (not a missing parameter):"
-              echo "$OUT"
-              exit 1
-            fi
-            echo "$(date -u +%H:%M:%S)  status=$STATUS"
-            [ "$STATUS" = "ok" ]    && break
-            [ "$STATUS" = "error" ] && { echo "Bench reported error on EC2."; exit 1; }
-            sleep 60
-          done
+        run: scripts/bench-cloud.sh wait
 
-      - name: Fetch EC2 logs on failure
+      - name: Fetch box logs on failure
         if: failure()
         run: |
-          echo "=== EC2 Benchmark Log ===" | tee bench-output.log
-          aws s3 cp "s3://$CORPUS_BUCKET/bench-log.txt" - 2>/dev/null | tee -a bench-output.log || echo "Failed to fetch log from S3"
+          echo "=== Benchmark box log ($BENCH_CLOUD) ===" | tee bench-output.log
+          scripts/bench-cloud.sh fetch-log | tee -a bench-output.log
 
       - name: Upload logs as artifact
         if: failure()
@@ -189,15 +163,15 @@ jobs:
           path: bench-output.log
           retention-days: 7
 
-      - name: Download results from S3
+      - name: Download results
         run: |
           if [ "$INFINO_BRANCH" = "main" ] && [ "$INFINO_REPO" = "infino-ai/infino" ]; then
-            aws s3 cp "s3://$CORPUS_BUCKET/results.json"      results.json
-            aws s3 cp "s3://$CORPUS_BUCKET/results-full.json" results-full.json
+            scripts/bench-cloud.sh fetch results.json      results.json
+            scripts/bench-cloud.sh fetch results-full.json results-full.json
           else
             RUN_SLUG="${INFINO_REPO//\//-}-${INFINO_BRANCH//\//-}"
-            aws s3 cp "s3://$CORPUS_BUCKET/results-branch-${RUN_SLUG}.json"      "results-branch-${RUN_SLUG}.json"
-            aws s3 cp "s3://$CORPUS_BUCKET/results-full-branch-${RUN_SLUG}.json" "results-full-branch-${RUN_SLUG}.json"
+            scripts/bench-cloud.sh fetch "results-branch-${RUN_SLUG}.json"      "results-branch-${RUN_SLUG}.json"
+            scripts/bench-cloud.sh fetch "results-full-branch-${RUN_SLUG}.json" "results-full-branch-${RUN_SLUG}.json"
           fi
 
       # Branch runs: compare the infino-branch column vs the committed main
@@ -357,13 +331,10 @@ jobs:
           exit 1
 
       # Always clean up — even if the bench or push step failed
-      - name: Delete SSM done-signal
+      - name: Delete done-signal
         if: always()
-        run: |
-          aws ssm delete-parameter --name /sbg-bench/done --region us-east-1 2>/dev/null || true
+        run: scripts/bench-cloud.sh clear-signal
 
-      - name: Terminate EC2 instance
+      - name: Terminate bench instance
         if: always()
-        run: |
-          aws ec2 terminate-instances --instance-ids "${{ steps.ec2.outputs.id }}"
-          echo "Terminated ${{ steps.ec2.outputs.id }}"
+        run: scripts/bench-cloud.sh terminate "${{ steps.box.outputs.handle }}"

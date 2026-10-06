@@ -63,13 +63,21 @@ The local results (infino, tantivy, lucene) were generated on:
 
 | | |
 |---|---|
-| Instance | AWS **c7i.2xlarge** (8 vCPU, 16 GiB RAM), us-east-1 |
-| CPU | Intel Xeon Platinum 8488C |
-| OS | Amazon Linux 2023, kernel `6.1.148-173.267.amzn2023.x86_64` |
+| Instance | GCP **c3-highcpu-8** (8 vCPU, 16 GiB RAM), us-central1-a |
+| CPU | Intel Xeon Platinum 8481C @ 2.70 GHz (Sapphire Rapids) |
+| OS | Rocky Linux 9 (tracks the `rocky-linux-9` image family) |
 | Rust | 1.95.0 |
 | JDK | Adoptium Temurin 21.0.8+9 |
 
-The c7i.2xlarge was chosen specifically to match the instance type used by turbopuffer in their published benchmark.
+Runs before 2026-10-06 used an AWS **c7i.2xlarge** (8 vCPU, 16 GiB, Intel Xeon
+Platinum 8488C, Amazon Linux 2023) in us-east-1. That instance type was chosen
+to match the one turbopuffer used in their published benchmark; the c3-highcpu-8
+is its closest equivalent — same Sapphire Rapids generation, same core count and
+memory — but it is a different SKU on a different cloud, so **absolute timings
+are not comparable across that date**, and a step in the published series at
+that point is the hardware change rather than an engine regression. The
+c7i.2xlarge path is still supported: dispatch the nightly workflow with
+`cloud: aws`.
 
 ### How turbopuffer numbers are sourced
 
@@ -91,17 +99,24 @@ The comparison is **methodologically equivalent**:
 
 | | infino / tantivy / lucene | turbopuffer |
 |---|---|---|
-| Hardware | AWS c7i.2xlarge, us-east-1 | AWS c7i.2xlarge (per their published benchmark) |
+| Hardware | GCP c3-highcpu-8, us-central1-a | AWS c7i.2xlarge (per their published benchmark) |
 | Benchmark harness | subprocess stdin/stdout | local HTTP server on the same box |
 | Latency measured | wall time including IPC overhead | wall time including localhost HTTP overhead |
 | Query set | turbopuffer's exact 31 queries | same 31 queries |
 | Commands compared | TOP_10, TOP_100, TOP_1000, COUNT | same |
 
 Turbopuffer's benchmark engine starts a **local** turbopuffer server process
-on the EC2 box and queries it via `http://localhost:3001` — no external network
-call. All four engines (infino, tantivy, lucene, turbopuffer) run on the same
-c7i.2xlarge hardware; the communication overhead difference (stdin/stdout vs
-localhost HTTP) is negligible, so the comparison is apples-to-apples.
+on their box and queries it via `http://localhost:3001` — no external network
+call, so the communication overhead difference (stdin/stdout vs localhost HTTP)
+is negligible.
+
+The one thing that is **not** matched is the machine. Turbopuffer's published
+numbers were measured on an AWS c7i.2xlarge; infino, tantivy and lucene are now
+measured on a GCP c3-highcpu-8 of the same generation, core count and memory.
+Methodology, corpus and query set are identical, but a cross-cloud hardware
+difference of a few percent is folded into every ratio on the tpuf page and
+should not be read as an engine difference. To compare on turbopuffer's exact
+hardware, dispatch the nightly with `cloud: aws`.
 
 ## Engine specific detail
 
