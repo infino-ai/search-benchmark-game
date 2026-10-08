@@ -120,7 +120,7 @@ read_signal() {
     gcp)
       if out=$(gcloud storage cat "$GCP_DONE" 2>&1); then
         echo "$out"
-      elif printf '%s' "$out" | grep -qiE "not found|no url|404"; then
+      elif printf '%s' "$out" | grep -qiE "not found|no url|matched no objects|404"; then
         echo pending
       else
         echo "reading the done-signal failed (not a missing object):" >&2
