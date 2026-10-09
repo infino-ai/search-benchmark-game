@@ -1,5 +1,6 @@
 # infino-platform: benchmarks infino on the hosted platform, over its REST API.
-# Builds the engines/infino-branch code with hosted support (see Cargo.toml).
+# Builds the engines/infino-branch code against the published infino 0.11.1
+# crate, with hosted support (see Cargo.toml).
 #
 #   INFINO_HOST         https://<gateway>/v1/<database> (or https://<gateway>/<database>)
 #   INFINO_API_KEY      the account's API key
