@@ -2087,9 +2087,9 @@ dependencies = [
 
 [[package]]
 name = "infino"
-version = "0.8.9"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fc72ad94d2ec2f6ce77f29ea1ed02b7976e40ce0106fd7783297ccb6161ddb4"
+checksum = "954ffb7c01169c71840b6bd42527499ec7cf40a9afe82560ea7447df14704016"
 dependencies = [
  "apache-avro",
  "arc-swap",
