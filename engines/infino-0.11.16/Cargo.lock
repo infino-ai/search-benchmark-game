@@ -2081,9 +2081,9 @@ dependencies = [
 
 [[package]]
 name = "infino"
-version = "0.11.9"
+version = "0.11.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5707f5cf94886f091f342cf2a24f10cbb5b76714d8d87d68d1cf947bacea70dd"
+checksum = "495d24bb45abd1caaae8de4195eb42c69484120b62ec7cc3e42a58f806b4ad82"
 dependencies = [
  "apache-avro",
  "arc-swap",
@@ -2126,6 +2126,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "tokio-util",
  "tracing",
  "unicode-properties",
  "unicode-segmentation",
