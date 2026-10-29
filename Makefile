@@ -14,7 +14,7 @@ QUERIES ?= queries.txt
 # lucene-10.5.0 stays ahead of lucene-10.5.0-bp: the web page takes the first
 # lucene-named column as the 1.00 baseline, so the plain build is the baseline
 # and the doc-reordered build reads as a ratio against it.
-ENGINES ?= infino-0.11.16 infino-main tantivy-0.26 lucene-10.5.0 lucene-10.5.0-bp iresearch-26.10.3
+ENGINES ?= infino-0.11.16 infino-main tantivy-0.27 lucene-10.5.0 lucene-10.5.0-bp iresearch-26.10.3
 # Hosted engines appended last, e.g. PLATFORM_ENGINES=infino-platform. Off by
 # default; the nightly sets it only on a dispatch with `platform: compare`. An
 # ENGINES given on the command line replaces the whole list and this is not
