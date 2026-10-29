@@ -80,7 +80,7 @@ pub fn options(storage: Arc<dyn StorageProvider>) -> SupertableOptions {
         // index-only (stored(false)), matching how the other engines build
         // the SBG index — Lucene does not store the body either. The
         // default `standard` analyzer (UAX #29 + Unicode lowercase) is the
-        // Lucene-parity tokenizer, same as the infino-0.11.16 engine.
+        // Lucene-parity tokenizer, same as the infino-0.11.17 engine.
         vec![FtsConfig::new(COLUMN)
             .positions(true)
             .stored(false)],
@@ -104,4 +104,10 @@ pub fn options(storage: Arc<dyn StorageProvider>) -> SupertableOptions {
     .with_commit_threshold_size_mb(4096)
     .with_storage(storage)
     .with_disk_cache(disk_cache)
+    // No table-level term index: `build_index` compacts the corpus to one
+    // superfile, so there is nothing for the index to route between, and
+    // its objects would only count against infino's index size on the
+    // page. The other engines' single force-merged segments carry no such
+    // index either.
+    .with_term_index(false)
 }
