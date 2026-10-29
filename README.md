@@ -139,7 +139,7 @@ crate comes from):
 
 | engine | source | benched on |
 |---|---|---|
-| `infino-0.11.16` | the published crate, pinned to the 0.11.16 release | every nightly |
+| `infino-0.11.17` | the published crate, pinned to the 0.11.17 release | every nightly |
 | `infino-main` | `infino-ai/infino` at `main`, path-depped at `../../../infino-main` | every nightly, and as the baseline on a branch run |
 | `infino-branch` | the repo/ref dispatched into the workflow, path-depped at `../../../infino` | branch and fork runs only |
 
