@@ -307,7 +307,7 @@ For a quick text summary from `results.json` without opening the browser:
 python tools/analyze.py <engine> [--command <command>] [--filter <tag>]
 ```
 
-- `<engine>` — e.g. `tantivy-main`, `tantivy-0.26`, `iresearch-26.03.1`
+- `<engine>` — e.g. `tantivy-main`, `tantivy-0.27`, `iresearch-26.03.1`
 - `--command` — benchmark command such as `TOP_100`, `TOP_100_COUNT`, or `COUNT`; defaults to `all`
 - `--filter` — optional tag filter: `union`, `intersection`, or `intersection_union`
 

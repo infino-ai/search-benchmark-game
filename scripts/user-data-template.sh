@@ -196,7 +196,7 @@ if [ "$IS_BRANCH_RUN" = "true" ] && [ "$SAME_BOX" = "true" ]; then
   # build + index in the last slot (no extra compile/index), so the fork page
   # can show both positions and separate real deltas from measurement-position
   # bias.
-  MAKE_ARGS+=(ENGINES="infino-branch infino-main tantivy-0.26 lucene-10.5.0 infino-branch-last")
+  MAKE_ARGS+=(ENGINES="infino-branch infino-main tantivy-0.27 lucene-10.5.0 infino-branch-last")
 elif [ "$IS_BRANCH_RUN" = "true" ]; then
   MAKE_ARGS+=(ENGINES=infino-branch)
 fi
