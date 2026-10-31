@@ -29,14 +29,19 @@ pub fn schema() -> Arc<Schema> {
     )]))
 }
 
+/// Cores the writer pool leaves free on a host with more than this many,
+/// matching the engine's default.
+const CORES_LEFT_FOR_QUERIES: usize = 2;
+
 /// Number of writer-pool threads (also the number of segments produced per
 /// commit, since a commit shards across `min(pool_threads, rows)`).
 ///
-/// Tuned for c7i.2xlarge (8 vCPU, 16 GiB). Capped at 4: fewer threads → fewer
-/// segments per commit (~12 total vs ~24 at 8) → less query-time fan-out, and
-/// lower build peak memory (4 parallel shard builds instead of 8). Build is a
-/// little slower but stays well within 16 GiB. A post-ingest `optimize`
-/// (see `build_index`) then compacts every segment into one superfile.
+/// The engine's own default: every core on a host of up to two cores,
+/// otherwise all but two, left for queries that arrive while an ingest
+/// runs. The bench builds the pool itself only so the count can be
+/// overridden; the number is the engine's. A post-ingest `optimize` (see
+/// `build_index`) compacts every segment into one superfile, so the
+/// segment count a wider pool produces never reaches the query side.
 pub fn writer_threads() -> usize {
     // A scale run on a large host wants more; INFINO_BENCH_WRITER_THREADS
     // overrides. The pool is not part of the options digest, so changing it
@@ -47,10 +52,14 @@ pub fn writer_threads() -> usize {
     {
         return n;
     }
-    std::thread::available_parallelism()
+    let cores = std::thread::available_parallelism()
         .map(|n| n.get())
-        .unwrap_or(4)
-        .min(4)
+        .unwrap_or(1);
+    if cores <= CORES_LEFT_FOR_QUERIES {
+        cores
+    } else {
+        cores - CORES_LEFT_FOR_QUERIES
+    }
 }
 
 /// Threads for one query's CPU work, from `BENCH_QUERY_THREADS`. Default 1.
