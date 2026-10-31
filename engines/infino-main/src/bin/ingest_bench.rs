@@ -44,7 +44,9 @@ fn envnum<T: std::str::FromStr>(k: &str) -> Option<T> {
 fn main() {
     if let Ok(level) = env::var("BENCH_TRACE") {
         tracing_subscriber::fmt()
-            .with_env_filter(tracing_subscriber::EnvFilter::new(format!("infino={level}")))
+            .with_env_filter(tracing_subscriber::EnvFilter::new(format!(
+                "infino={level}"
+            )))
             .with_writer(std::io::stderr)
             .init();
     }
@@ -95,7 +97,7 @@ fn main() {
         where_,
         threads
             .map(|n| n.to_string())
-            .unwrap_or_else(|| format!("{}(default)", infino_bench::writer_threads())),
+            .unwrap_or_else(|| "auto".to_string()),
         batch_rows,
         flush_mb,
         compact_mb,
