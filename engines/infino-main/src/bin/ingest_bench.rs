@@ -20,8 +20,10 @@
 //!                         timing run pays nothing for logging.
 
 use std::env;
-use std::io::{self, BufRead};
+use std::io::{self, BufRead, BufReader};
 use std::sync::Arc;
+use std::sync::mpsc::sync_channel;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use arrow_array::{LargeStringArray, RecordBatch};
@@ -36,6 +38,10 @@ use serde::Deserialize;
 struct Doc {
     text: String,
 }
+
+/// Read buffer in front of stdin: large reads off the corpus file, so the
+/// producer thread spends its time on parsing rather than on syscalls.
+const STDIN_BUFFER_BYTES: usize = 8 * 1024 * 1024;
 
 fn envnum<T: std::str::FromStr>(k: &str) -> Option<T> {
     env::var(k).ok().and_then(|v| v.parse().ok())
@@ -107,49 +113,69 @@ fn main() {
     let st = Supertable::create(opts).expect("create supertable");
     let mut writer = st.writer().expect("acquire writer");
     let schema = infino_bench::schema();
-
-    let mut buf: Vec<String> = Vec::with_capacity(batch_rows);
-    let mut total: u64 = 0;
-    let (mut t_read, mut t_parse, mut t_arrow, mut t_append) = (
-        Duration::ZERO,
-        Duration::ZERO,
-        Duration::ZERO,
-        Duration::ZERO,
-    );
-    let mut bytes: u64 = 0;
-
+    // The corpus is read, parsed and turned into Arrow on its own thread,
+    // the way the Lucene and iresearch harnesses hand parsed documents to
+    // their indexers: the engine's append and commit never wait on stdin,
+    // and stdin is never left idle while the engine builds. Two batches
+    // of slack between the two threads.
     let t_total = Instant::now();
-    let stdin = io::stdin();
-    let mut lock = stdin.lock();
-    let mut line = String::new();
-    loop {
-        line.clear();
-        let t = Instant::now();
-        let n = lock.read_line(&mut line).expect("read line");
-        t_read += t.elapsed();
-        if n == 0 {
-            break;
-        }
-        bytes += n as u64;
-        if line.trim().is_empty() {
-            continue;
-        }
-        let t = Instant::now();
-        let doc: Doc = serde_json::from_str(&line).expect("parse json");
-        t_parse += t.elapsed();
-        buf.push(doc.text);
-        if buf.len() == batch_rows {
-            total += buf.len() as u64;
-            append(&mut writer, &schema, &mut buf, &mut t_arrow, &mut t_append);
-            if total % 1_000_000 == 0 {
-                eprintln!("{total}");
+    let (tx, rx) = sync_channel::<RecordBatch>(2);
+    let producer_schema = Arc::clone(&schema);
+    let producer = thread::spawn(move || {
+        let (mut t_read, mut t_parse, mut t_arrow) =
+            (Duration::ZERO, Duration::ZERO, Duration::ZERO);
+        let mut bytes: u64 = 0;
+        let mut buf: Vec<String> = Vec::with_capacity(batch_rows);
+        let stdin = io::stdin();
+        let mut reader = BufReader::with_capacity(STDIN_BUFFER_BYTES, stdin.lock());
+        let mut line = String::new();
+        let flush = |buf: &mut Vec<String>, t_arrow: &mut Duration| {
+            let t = Instant::now();
+            let arr = LargeStringArray::from(buf.iter().map(String::as_str).collect::<Vec<_>>());
+            let batch = RecordBatch::try_new(Arc::clone(&producer_schema), vec![Arc::new(arr)])
+                .expect("record batch");
+            *t_arrow += t.elapsed();
+            buf.clear();
+            tx.send(batch).expect("the appending thread is alive");
+        };
+        loop {
+            line.clear();
+            let t = Instant::now();
+            let n = reader.read_line(&mut line).expect("read line");
+            t_read += t.elapsed();
+            if n == 0 {
+                break;
+            }
+            bytes += n as u64;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let t = Instant::now();
+            let doc: Doc = serde_json::from_str(&line).expect("parse json");
+            t_parse += t.elapsed();
+            buf.push(doc.text);
+            if buf.len() == batch_rows {
+                flush(&mut buf, &mut t_arrow);
             }
         }
+        if !buf.is_empty() {
+            flush(&mut buf, &mut t_arrow);
+        }
+        (t_read, t_parse, t_arrow, bytes)
+    });
+
+    let mut total: u64 = 0;
+    let mut t_append = Duration::ZERO;
+    for batch in rx {
+        total += batch.num_rows() as u64;
+        let t = Instant::now();
+        writer.append(&batch).expect("append batch");
+        t_append += t.elapsed();
+        if total % 1_000_000 == 0 {
+            eprintln!("{total}");
+        }
     }
-    if !buf.is_empty() {
-        total += buf.len() as u64;
-        append(&mut writer, &schema, &mut buf, &mut t_arrow, &mut t_append);
-    }
+    let (t_read, t_parse, t_arrow, bytes) = producer.join().expect("producer thread");
 
     let t = Instant::now();
     writer.commit().expect("commit");
@@ -196,21 +222,4 @@ fn main() {
     let n = reader.manifest().superfiles.len();
     eprintln!("SUPERFILE_COUNT after compact: {n}");
     eprintln!("[phase] total={:.1}s", t_total.elapsed().as_secs_f64());
-}
-
-fn append(
-    writer: &mut infino::supertable::SupertableWriter,
-    schema: &Arc<arrow_schema::Schema>,
-    buf: &mut Vec<String>,
-    t_arrow: &mut Duration,
-    t_append: &mut Duration,
-) {
-    let t = Instant::now();
-    let arr = LargeStringArray::from(buf.iter().map(String::as_str).collect::<Vec<_>>());
-    let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(arr)]).expect("record batch");
-    *t_arrow += t.elapsed();
-    let t = Instant::now();
-    writer.append(&batch).expect("append batch");
-    *t_append += t.elapsed();
-    buf.clear();
 }
