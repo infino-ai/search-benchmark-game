@@ -28,44 +28,19 @@ pub fn schema() -> Arc<Schema> {
     )]))
 }
 
-/// Cores the writer pool leaves free on a host with more than this many,
-/// matching the engine's default.
-const CORES_LEFT_FOR_QUERIES: usize = 2;
-
-/// Number of writer-pool threads (also the number of segments produced per
-/// commit, since a commit shards across `min(pool_threads, rows)`).
-///
-/// The engine's own default: every core on a host of up to two cores,
-/// otherwise all but two, left for queries that arrive while an ingest
-/// runs. The bench builds the pool itself only so the count can be
-/// overridden; the number is the engine's. A post-ingest `optimize` (see
-/// `build_index`) compacts every segment into one superfile, so the
-/// segment count a wider pool produces never reaches the query side.
-pub fn writer_threads() -> usize {
-    let cores = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1);
-    if cores <= CORES_LEFT_FOR_QUERIES {
-        cores
-    } else {
-        cores - CORES_LEFT_FOR_QUERIES
-    }
-}
-
 /// Options shared by builder and reader.
 ///
-/// Bounded-memory build: a multi-thread writer pool builds segments in parallel
-/// and a `with_commit_threshold_size_mb` auto-flush caps the in-memory write
+/// The writer pool is the engine's default (`writer_threads: auto`): the
+/// bench sets nothing, so the build runs the way the engine runs it. A
+/// post-ingest `optimize` (see `build_index`) compacts every segment into
+/// one superfile, so the pool width never reaches the query side.
+///
+/// Bounded-memory build: the writer pool builds segments in parallel and a
+/// `with_commit_threshold_size_mb` auto-flush caps the in-memory write
 /// buffer, so the corpus is committed in several rounds rather than held whole
 /// in RAM. This emits multiple superfiles; `build_index`'s post-ingest
 /// `optimize` compacts them into one.
 pub fn options(storage: Arc<dyn StorageProvider>) -> SupertableOptions {
-    let writer_pool = Arc::new(
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(writer_threads())
-            .build()
-            .expect("build writer pool"),
-    );
     let reader_pool = Arc::new(
         rayon::ThreadPoolBuilder::new()
             .num_threads(1)
@@ -90,9 +65,7 @@ pub fn options(storage: Arc<dyn StorageProvider>) -> SupertableOptions {
         // the SBG index — Lucene does not store the body either. The
         // default `standard` analyzer (UAX #29 + Unicode lowercase) is the
         // Lucene-parity tokenizer, same as the infino-0.11.17 engine.
-        vec![FtsConfig::new(COLUMN)
-            .positions(true)
-            .stored(false)],
+        vec![FtsConfig::new(COLUMN).positions(true).stored(false)],
         vec![],
     )
     .expect("valid supertable options")
@@ -100,7 +73,6 @@ pub fn options(storage: Arc<dyn StorageProvider>) -> SupertableOptions {
         column: "_id".to_string(),
         n_buckets: 1,
     })
-    .with_writer_pool(writer_pool)
     .with_reader_pool(reader_pool)
     // Snapshot read consistency: the bench index is built once and read many
     // times in-process, so pin the manifest at open and never pay the
