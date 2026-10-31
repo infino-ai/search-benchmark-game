@@ -8,8 +8,10 @@
 //! Lucene produce — so query-path fan-out overhead is equivalent.
 
 use std::env;
-use std::io::{self, BufRead};
+use std::io::{self, BufRead, BufReader};
 use std::sync::Arc;
+use std::sync::mpsc::sync_channel;
+use std::thread;
 use std::time::Duration;
 
 use arrow_array::{LargeStringArray, RecordBatch};
@@ -22,6 +24,10 @@ use serde::Deserialize;
 const COMPACT_TARGET_MB: u64 = 8 * 1024;
 
 const BATCH: usize = 50_000;
+
+/// Read buffer in front of stdin: large reads off the corpus file, so the
+/// producer thread spends its time on parsing rather than on syscalls.
+const STDIN_BUFFER_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Deserialize)]
 struct Doc {
@@ -36,28 +42,54 @@ fn main() {
     let mut writer = st.writer().expect("acquire writer");
     let schema = infino_bench::schema();
 
-    let mut buf: Vec<String> = Vec::with_capacity(BATCH);
-    let mut total: u64 = 0;
-    let stdin = io::stdin();
-    for line in stdin.lock().lines() {
-        let line = line.expect("read line");
-        if line.trim().is_empty() {
-            continue;
-        }
-        let doc: Doc = serde_json::from_str(&line).expect("parse json");
-        buf.push(doc.text);
-        if buf.len() == BATCH {
-            total += buf.len() as u64;
-            append(&mut writer, &schema, &mut buf);
-            if total % 1_000_000 == 0 {
-                eprintln!("{total}");
+    // The corpus is read, parsed and turned into Arrow on its own thread,
+    // the way the Lucene and iresearch harnesses hand parsed documents to
+    // their indexers: the engine's append and commit never wait on stdin,
+    // and stdin is never left idle while the engine builds. Two batches of
+    // slack between the two threads.
+    let (tx, rx) = sync_channel::<RecordBatch>(2);
+    let producer_schema = Arc::clone(&schema);
+    let producer = thread::spawn(move || {
+        let mut buf: Vec<String> = Vec::with_capacity(BATCH);
+        let stdin = io::stdin();
+        let mut reader = BufReader::with_capacity(STDIN_BUFFER_BYTES, stdin.lock());
+        let mut line = String::new();
+        let flush = |buf: &mut Vec<String>| {
+            let arr = LargeStringArray::from(buf.iter().map(String::as_str).collect::<Vec<_>>());
+            let batch = RecordBatch::try_new(Arc::clone(&producer_schema), vec![Arc::new(arr)])
+                .expect("record batch");
+            buf.clear();
+            tx.send(batch).expect("the appending thread is alive");
+        };
+        loop {
+            line.clear();
+            let n = reader.read_line(&mut line).expect("read line");
+            if n == 0 {
+                break;
+            }
+            if line.trim().is_empty() {
+                continue;
+            }
+            let doc: Doc = serde_json::from_str(&line).expect("parse json");
+            buf.push(doc.text);
+            if buf.len() == BATCH {
+                flush(&mut buf);
             }
         }
+        if !buf.is_empty() {
+            flush(&mut buf);
+        }
+    });
+
+    let mut total: u64 = 0;
+    for batch in rx {
+        total += batch.num_rows() as u64;
+        writer.append(&batch).expect("append batch");
+        if total % 1_000_000 == 0 {
+            eprintln!("{total}");
+        }
     }
-    if !buf.is_empty() {
-        total += buf.len() as u64;
-        append(&mut writer, &schema, &mut buf);
-    }
+    producer.join().expect("producer thread");
 
     writer.commit().expect("commit");
     drop(writer);
@@ -98,15 +130,4 @@ fn main() {
         );
         std::process::exit(1);
     }
-}
-
-fn append(
-    writer: &mut infino::supertable::SupertableWriter,
-    schema: &Arc<arrow_schema::Schema>,
-    buf: &mut Vec<String>,
-) {
-    let arr = LargeStringArray::from(buf.iter().map(String::as_str).collect::<Vec<_>>());
-    let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(arr)]).expect("record batch");
-    writer.append(&batch).expect("append batch");
-    buf.clear();
 }
