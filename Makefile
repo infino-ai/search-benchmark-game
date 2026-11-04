@@ -43,11 +43,16 @@ corpus:
 clean:
 	@echo "--- Cleaning directories ---"
 	@rm -fr results
-	@for engine in $(ENGINES); do cd ${shell pwd}/engines/$$engine && make clean ; done
+	@for engine in $(ENGINES); do cd ${shell pwd}/engines/$$engine && make clean && rm -f index-time.json ; done
 
+# Each engine's build is timed as a whole (ingest through its final merge or
+# optimize) and the time recorded beside the index, in
+# engines/<engine>/index-time.json, for the page's "time to build the index"
+# row. Compilation is not in that time: run `make compile` first, as the
+# nightly does; an engine's `index` target never rebuilds a binary it has.
 index:
 	@echo "--- Indexing corpus ---"
-	@for engine in $(ENGINES); do cd ${shell pwd}/engines/$$engine && make index || exit 1; done
+	@for engine in $(ENGINES); do python3 scripts/time_index.py $$engine || exit 1; done
 
 fetch-tpuf:
 	@python3 scripts/fetch_tpuf_latest.py

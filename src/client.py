@@ -155,6 +155,24 @@ def index_size_bytes(idx_path):
     return total
 
 
+def index_build_secs(engine_dir, corpus_bytes):
+    """Seconds scripts/time_index.py recorded for building this engine's
+    index: ingest through the final merge or optimize, as one number.
+    None when no build was recorded, or when the recorded build was of a
+    corpus other than the one this run is measuring against."""
+    try:
+        with open(path.join(engine_dir, "index-time.json")) as f:
+            record = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if corpus_bytes is not None and record.get("corpus_bytes") != corpus_bytes:
+        return None
+    secs = record.get("index_secs")
+    if not isinstance(secs, (int, float)):
+        return None
+    return float(secs)
+
+
 WARMUP_TIME = int(os.environ.get('WARMUP_TIME', '60'))
 NUM_ITER = int(os.environ.get('NUM_ITER', '10'))
 
@@ -199,16 +217,35 @@ if __name__ == "__main__":
     # number. So a declared size wins whenever the local path cannot be read.
     # A hosted table's size can't be measured from here, and the declared
     # size is for a different index, so hosted engines report none.
+    # And how long each engine took to build that index, ingest through its
+    # final merge or optimize (scripts/time_index.py records it when `make
+    # index` runs). Only an index this run can see on disk carries a time: an
+    # engine that re-benches another's index built nothing, a hosted table was
+    # loaded rather than built, and a scale index was built out of band (its
+    # cost is in run.build). A recording of some other corpus is not this
+    # run's either, so the corpus the timing names must be the one benched.
     declared = os.environ.get("INFINO_BENCH_INDEX_BYTES")
+    corpus_bytes = None
+    corpus_path = os.environ.get("CORPUS")
+    if corpus_path:
+      try:
+        corpus_bytes = os.stat(corpus_path).st_size
+      except OSError:
+        pass
     index_sizes = {}
+    index_times = {}
     for engine in engines:
       measured = index_size_bytes(path.join(dirname, engine, "idx"))
+      built = None
+      if measured is not None and engine not in HOSTED_ENGINES:
+        built = index_build_secs(path.join(dirname, engine), corpus_bytes)
       if measured is None and declared and engine not in HOSTED_ENGINES:
         try:
           measured = int(declared)
         except ValueError:
           measured = None
       index_sizes[engine] = measured
+      index_times[engine] = built
 
     results = {}
     # An engine that fails is removed from all results, and the run block
@@ -272,6 +309,7 @@ if __name__ == "__main__":
     for engine in failed:
         details.pop(engine, None)
         index_sizes.pop(engine, None)
+        index_times.pop(engine, None)
     # What produced these numbers: corpus, query set, and when the run started.
     # Never fatal — see run_provenance.py.
     run = run_provenance.collect(
@@ -282,7 +320,7 @@ if __name__ == "__main__":
     # it and renames afterwards leaves that file deleted in the working tree.
     results_path = os.environ.get("RESULTS_PATH", "results.json")
     with open(results_path, "w") as f:
-        json.dump({ "run": run, "details": details, "index_sizes": index_sizes, "results": results }, f, default=lambda obj: obj.__dict__)
+        json.dump({ "run": run, "details": details, "index_sizes": index_sizes, "index_times": index_times, "results": results }, f, default=lambda obj: obj.__dict__)
     # Results are written; exit non-zero if any engine failed.
     if failed:
         for engine, reason in failed.items():

@@ -21,11 +21,15 @@ function formatBytes(n) {
   return (i === 0 ? v.toFixed(0) : v.toFixed(2)) + " " + units[i];
 }
 
-// Whole seconds as "45 s", "12 min" or "6.7 h": a build is read at a glance.
+// Seconds as "45.3 s", "2 min 21 s" or "1 h 05 min": a build is read at a
+// glance, and two builds a minute apart still read as different.
 function formatDuration(secs) {
-  if (secs < 120) return Math.round(secs) + " s";
-  if (secs < 7200) return Math.round(secs / 60) + " min";
-  return (secs / 3600).toFixed(1) + " h";
+  if (secs === undefined || secs === null) return "—";
+  if (secs < 60) return secs.toFixed(1) + " s";
+  const total = Math.round(secs);
+  if (total < 3600) return Math.floor(total / 60) + " min " + (total % 60) + " s";
+  const minutes = Math.floor((total % 3600) / 60);
+  return Math.floor(total / 3600) + " h " + (minutes < 10 ? "0" + minutes : minutes) + " min";
 }
 
 function numberWithCommas(x) {
@@ -295,49 +299,71 @@ function Headline({ data }) {
   );
 }
 
-// On-disk index size per engine, sourced from data.index_sizes (a map
-// engine -> bytes recorded at build time), with the smallest highlighted.
-// Renders nothing for runs whose results.json predates index-size recording.
-function IndexSize({ data }) {
-  const sizes = data.index_sizes;
-  if (!sizes || Object.keys(sizes).length === 0) return null;
-  const present = Object.keys(sizes).filter(e => sizes[e] !== undefined && sizes[e] !== null);
+// One per-engine build metric (a map engine -> number) as a ranked row, the
+// lowest value leading. Bars are relative to Lucene, as in the latency table;
+// without a Lucene column they fall back to the row's largest value. Renders
+// nothing when no engine carries the metric, which is every results.json that
+// predates its recording.
+function EngineMetric({ values, title, hint, label, format, keyPrefix }) {
+  if (!values || Object.keys(values).length === 0) return null;
+  const present = Object.keys(values).filter(e => values[e] !== undefined && values[e] !== null);
   if (present.length === 0) return null;
   const engines = orderEngines(present);
   const luceneKey = engines.find(e => e.toLowerCase().indexOf("lucene") >= 0);
-  const base = luceneKey ? sizes[luceneKey] : undefined;
-  // Bars are relative to Lucene, as in the latency table; without a Lucene
-  // column they fall back to the largest index.
-  const row = Object.fromEntries(engines.map(e => [e, base ? sizes[e] / base : sizes[e]]));
+  const base = luceneKey ? values[luceneKey] : undefined;
+  const row = Object.fromEntries(engines.map(e => [e, base ? values[e] / base : values[e]]));
   const ranks = rowRanks(row);
   return (
     <div className="headline">
       <div className="headline-title">
-        Index size on disk{luceneKey ? <span className="headline-hint"> (and relative to Lucene = 1.00; &gt;1 = larger)</span> : null}
+        {title}{luceneKey ? <span className="headline-hint"> {hint}</span> : null}
       </div>
       <table className="headline-table">
         <thead>
           <tr>
             <th>Metric</th>
-            {engines.map(engine => <th key={"is-h-" + engine}><EngineHeader name={engine} /></th>)}
+            {engines.map(engine => <th key={keyPrefix + "-h-" + engine}><EngineHeader name={engine} /></th>)}
           </tr>
         </thead>
         <tbody>
           <tr>
-            <td className="hl-engine">Size</td>
-            {engines.map(engine => rankedCell(row[engine], formatBytes(sizes[engine]), ranks.rank[engine], ranks.max, !base, "is-s-" + engine))}
+            <td className="hl-engine">{label}</td>
+            {engines.map(engine => rankedCell(row[engine], format(values[engine]), ranks.rank[engine], ranks.max, !base, keyPrefix + "-s-" + engine))}
           </tr>
           {base ? (
             <tr>
               <td className="hl-engine">vs Lucene</td>
               {engines.map(engine => (
-                <td className="hl-cell" key={"is-r-" + engine}>{(sizes[engine] / base).toFixed(2)}</td>
+                <td className="hl-cell" key={keyPrefix + "-r-" + engine}>{(values[engine] / base).toFixed(2)}</td>
               ))}
             </tr>
           ) : null}
         </tbody>
       </table>
     </div>
+  );
+}
+
+// On-disk index size per engine, from data.index_sizes (bytes recorded at
+// build time), with the smallest highlighted.
+function IndexSize({ data }) {
+  return (
+    <EngineMetric values={data.index_sizes} title="Index size on disk"
+      hint="(and relative to Lucene = 1.00; >1 = larger)" label="Size"
+      format={formatBytes} keyPrefix="is" />
+  );
+}
+
+// Wall clock of each engine's complete index build, from data.index_times
+// (seconds recorded when the run built the index): ingest through the final
+// merge or optimize that gives the index its benched shape, so it is the time
+// a user waits before the first query. An engine whose index the run did not
+// build (a hosted table, a scale index built out of band) carries none.
+function IndexTime({ data }) {
+  return (
+    <EngineMetric values={data.index_times} title="Time to build the index"
+      hint="(ingest through the final merge/optimize; and relative to Lucene = 1.00; >1 = slower)" label="Build"
+      format={formatDuration} keyPrefix="it" />
   );
 }
 
@@ -569,6 +595,7 @@ class Benchmark extends React.Component {
     return <div>
       <Headline data={this.props.data} />
       <IndexSize data={this.props.data} />
+      <IndexTime data={this.props.data} />
       <RunProvenance data={this.props.data} />
       <form>
         <fieldset>

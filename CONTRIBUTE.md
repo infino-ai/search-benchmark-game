@@ -13,6 +13,12 @@ Removes all files, including the built index, and your compiled bench program.
 Starts a program that will receive documents from stdin and build a search
 index. Check out the lucene implementation for reference.
 
+The whole of `make index` is timed and published as the engine's index build
+time, so it must leave the index in the shape `serve` is benched on (the
+force-merge or optimize included) and must not compile the engine: `make
+compile` runs before it, and the `index` target should reuse the binary it
+built rather than rebuild it.
+
 Stemming should be disabled. Tokenization should be something reasonably close to Lucene's
 [StandardTokenizer](https://lucene.apache.org/core/7_3_1/core/org/apache/lucene/analysis/standard/StandardTokenizer.html). Discrepancies should be documented in `README.md`.
 
