@@ -36,7 +36,7 @@ def queries_of(column):
 
 def merge(inputs, index_sizes=None):
     """Union the engine columns of several results files, by command."""
-    out = {"run": {}, "details": {}, "index_sizes": {}, "results": {}}
+    out = {"run": {}, "details": {}, "index_sizes": {}, "index_times": {}, "results": {}}
     runs = []
 
     for name, doc in inputs:
@@ -62,6 +62,9 @@ def merge(inputs, index_sizes=None):
         for engine, size in (doc.get("index_sizes") or {}).items():
             if size is not None:
                 out["index_sizes"][engine] = size
+        for engine, secs in (doc.get("index_times") or {}).items():
+            if secs is not None:
+                out["index_times"][engine] = secs
 
         for cmd, columns in doc.get("results", {}).items():
             dest = out["results"].setdefault(cmd, {})

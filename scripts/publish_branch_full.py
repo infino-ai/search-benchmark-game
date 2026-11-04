@@ -127,6 +127,12 @@ def merge(main_full: dict, branch_full: dict, engine_key: str, label: str) -> di
                   f"column; skipping this mode for the branch", file=sys.stderr)
             continue
         engines[engine_key] = branch_col
+    # The branch's own index size and build time travel with its column; the
+    # baseline engines keep the ones the nightly recorded.
+    for field in ("index_sizes", "index_times"):
+        branch_value = (branch_full.get(field) or {}).get(BRANCH_ENGINE_FIRST)
+        if branch_value is not None:
+            main_full.setdefault(field, {})[engine_key] = branch_value
     details = main_full.setdefault("details", {})
     for key in hosted:
         if key in branch_full.get("details", {}):

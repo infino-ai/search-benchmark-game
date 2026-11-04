@@ -28,9 +28,25 @@ def fmt_bytes(n):
         n /= 1024.0
 
 
+def fmt_secs(secs):
+    if secs is None:
+        return "n/a"
+    if secs < 60:
+        return f"{secs:.1f} s"
+    total = round(secs)
+    if total < 3600:
+        return f"{total // 60} min {total % 60:02d} s"
+    return f"{total // 3600} h {(total % 3600) // 60:02d} min"
+
+
 def load_index_sizes(path):
     with open(path) as f:
         return json.load(f).get("index_sizes", {}) or {}
+
+
+def load_index_times(path):
+    with open(path) as f:
+        return json.load(f).get("index_times", {}) or {}
 
 
 # Which infino column to read on each side, most-preferred first.
@@ -116,38 +132,50 @@ def compare(baseline_path, experiment_path, label):
             lines.append(f"| `{query}` | {b_us} | {e_us} | {sign}{pct:.1f}%{flag} |")
         lines.append("")
 
-    b_sizes = load_index_sizes(baseline_path)
-    e_sizes = load_index_sizes(experiment_path)
-    if b_sizes or e_sizes:
-        lines.append("### Index size\n")
+    # The two infino columns carry different names on each side
+    # (`infino-branch` here, `infino-main` in the baseline), so pair them
+    # explicitly first; everything else pairs by name, in the ENGINES /
+    # results.json order (branch first, then any baseline-only engine) so
+    # this matches the latency ordering rather than alphabetizing.
+    infino_label = (
+        experiment_engine if experiment_engine == baseline_engine
+        else f"{experiment_engine} vs {baseline_engine}"
+    )
+
+    def per_engine_table(title, b_values, e_values, fmt):
+        if not (b_values or e_values):
+            return
+        lines.append(f"### {title}\n")
         lines.append("| engine | main | branch | Δ% |")
         lines.append("|---|---:|---:|---:|")
 
-        def size_row(label, b, e):
+        def row(label, b, e):
             if b and e:
                 pct = (e / b - 1) * 100
                 delta = f"{'+' if pct > 0 else ''}{pct:.2f}%"
             else:
                 delta = "—"
-            lines.append(f"| {label} | {fmt_bytes(b)} | {fmt_bytes(e)} | {delta} |")
+            lines.append(f"| {label} | {fmt(b)} | {fmt(e)} | {delta} |")
 
-        # The two infino columns carry different names on each side
-        # (`infino-branch` here, `infino-main` in the baseline), so pair them
-        # explicitly first; everything else pairs by name, in the ENGINES /
-        # results.json order (branch first, then any baseline-only engine) so
-        # this matches the latency ordering rather than alphabetizing.
-        infino_label = (
-            experiment_engine if experiment_engine == baseline_engine
-            else f"{experiment_engine} vs {baseline_engine}"
-        )
-        size_row(infino_label,
-                 b_sizes.get(baseline_engine), e_sizes.get(experiment_engine))
+        row(infino_label,
+            b_values.get(baseline_engine), e_values.get(experiment_engine))
         paired = {baseline_engine, experiment_engine}
-        for engine in dict.fromkeys(list(e_sizes) + list(b_sizes)):
+        for engine in dict.fromkeys(list(e_values) + list(b_values)):
             if engine in paired:
                 continue
-            size_row(engine, b_sizes.get(engine), e_sizes.get(engine))
+            row(engine, b_values.get(engine), e_values.get(engine))
         lines.append("")
+
+    per_engine_table("Index size",
+                     load_index_sizes(baseline_path), load_index_sizes(experiment_path),
+                     fmt_bytes)
+    # Wall clock of the complete build, ingest through the final merge or
+    # optimize. A branch and the baseline it is compared against were built on
+    # different boxes on different nights, so this is a coarser signal than the
+    # same-box latency table above it.
+    per_engine_table("Index build time",
+                     load_index_times(baseline_path), load_index_times(experiment_path),
+                     fmt_secs)
 
     if all_ratios:
         gmean = math.exp(sum(math.log(r) for r in all_ratios) / len(all_ratios))

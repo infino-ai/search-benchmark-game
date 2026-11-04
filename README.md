@@ -291,7 +291,17 @@ This command may take more than 30mn.
 make bench
 ```
 
-The results are outputted in a `results.json` file.
+The results are outputted in a `results.json` file. Beside the per-query
+timings it records, per engine, the size of the built index (`index_sizes`,
+bytes) and how long building it took (`index_times`, seconds); the page shows
+both as ranked rows under the latency table. The build time is the wall clock
+of the whole of `make index`, from the first document read to an index in its
+benched shape — ingest plus infino's optimize, or Lucene's and tantivy's
+force-merge to one segment — because that is the time a user waits for.
+Compilation is excluded (`make compile` runs first). An engine whose index the
+run did not build has no time: `infino-branch-last` re-benches another
+engine's index, a hosted table is loaded rather than built, and a scale index
+is built out of band (its cost is under `run.build`).
 
 You can then check your results out by running:
 
