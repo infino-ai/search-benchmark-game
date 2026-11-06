@@ -2081,9 +2081,9 @@ dependencies = [
 
 [[package]]
 name = "infino"
-version = "0.11.17"
+version = "0.11.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d4968e044e33c5a906ae7ecef870fa91f9e79ff9a661e6d39c39413bb8c8915"
+checksum = "a0916d2daa62d842e22b20c6d6050386e5a27b96b8e548a31b49388ce79ff773"
 dependencies = [
  "apache-avro",
  "arc-swap",
@@ -2105,7 +2105,6 @@ dependencies = [
  "figment",
  "fs4",
  "futures",
- "hashbrown 0.17.1",
  "libmimalloc-sys",
  "memmap2",
  "memory-stats",
