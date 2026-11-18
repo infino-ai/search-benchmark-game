@@ -2,8 +2,8 @@ name: Nightly benchmark
 
 # Runs the full turbopuffer-comparison bench on a dedicated 8 vCPU / 16 GiB
 # Sapphire Rapids box, commits results.json to master, and lets the existing
-# pages.yml publish the dashboard. It runs on demand only (workflow_dispatch);
-# there is no daily schedule.
+# pages.yml publish the dashboard. Scheduled about every two weeks (1st and
+# 15th of the month); dispatch it for anything in between.
 #
 # The box is a GCP c3-highcpu-8 by default. The AWS c7i.2xlarge the nightly
 # used to run on is still fully supported — dispatch with `cloud: aws` to get
@@ -14,7 +14,7 @@ name: Nightly benchmark
 # The nightly benches two infino columns: `infino-0.11.26` (the published crate)
 # and `infino-main` (the tip of infino-ai/infino main). `infino-platform`
 # (infino on the hosted platform) is opt-in: a dispatch with `platform: compare`
-# adds it to that run's engines; it is off by default.
+# adds it to that run's engines, and the scheduled nightly never includes it.
 # See README.
 #
 # workflow_dispatch accepts an optional `infino_branch` input. When set to
@@ -30,6 +30,8 @@ name: Nightly benchmark
 # pages.yml then deploys.
 
 on:
+  schedule:
+    - cron: '0 3 1,15 * *'   # 03:00 UTC on the 1st and 15th (~every two weeks)
   workflow_dispatch:
     inputs:
       infino_branch:
@@ -52,7 +54,7 @@ on:
         default: true
         required: false
       platform:
-        description: 'infino-platform (infino on the hosted platform). off = no platform column (default). compare = add the column to this run''s engines; published like the rest of the run (a main run publishes to the official results until the next main run). only = bench it alone and publish nothing (latency to the job summary). compare and only fail if the platform secrets are missing.'
+        description: 'infino-platform (infino on the hosted platform). off = no platform column (default; the scheduled nightly is always off). compare = add the column to this run''s engines; published like the rest of the run (a main run publishes to the official results until the next nightly). only = bench it alone and publish nothing (latency to the job summary). compare and only fail if the platform secrets are missing.'
         type: choice
         options: ['off', compare, only]
         default: 'off'
@@ -66,13 +68,16 @@ jobs:
   bench:
     runs-on: ubuntu-latest
     env:
-      # Fallbacks mirror the dispatch input defaults.
+      # The scheduled run passes no inputs, so this is where the nightly's
+      # default cloud is set; the input only overrides a dispatch.
       BENCH_CLOUD: ${{ inputs.cloud || 'gcp' }}
       INFINO_BRANCH: ${{ inputs.infino_branch || 'main' }}
       INFINO_REPO: ${{ inputs.infino_repo || 'infino-ai/infino' }}
-      # On by default (input default true); a main run skips the baseline
-      # regardless (see the IS_BRANCH_RUN guard in user-data).
+      # On by default (input default true); the nightly schedule has no inputs so
+      # this is 'false' there, and a main run skips the baseline regardless (see the
+      # IS_BRANCH_RUN guard in user-data).
       SAME_BOX: ${{ inputs.same_box && 'true' || 'false' }}
+      # The scheduled run has no inputs, so it is always off.
       PLATFORM: ${{ inputs.platform || 'off' }}
 
     steps:

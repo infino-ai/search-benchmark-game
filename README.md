@@ -6,8 +6,8 @@ aspects of search engine technologies.
 
 The results are available at:
 
-- **[full benchmark](https://infino-ai.github.io/search-benchmark-game/)** — 962-query standard set (infino, tantivy, lucene, lucene with doc reordering, iresearch), updated on each main run of the bench workflow (on demand). Also served at `/full`.
-- **[turbopuffer comparison](https://infino-ai.github.io/search-benchmark-game/tpuf)** — infino vs tantivy vs lucene vs turbopuffer on turbopuffer's 31-query set, updated on each main run
+- **[full benchmark](https://infino-ai.github.io/search-benchmark-game/)** — 962-query standard set (infino, tantivy, lucene, lucene with doc reordering, iresearch), updated every two weeks. Also served at `/full`.
+- **[turbopuffer comparison](https://infino-ai.github.io/search-benchmark-game/tpuf)** — infino vs tantivy vs lucene vs turbopuffer on turbopuffer's 31-query set, updated every two weeks
 - **per-fork branch page** — `https://infino-ai.github.io/search-benchmark-game/<fork_user>/full`, the same full benchmark with the latest branch run from a public infino fork spliced in as an extra infino column. Produced by dispatching the nightly workflow with `infino_repo`/`infino_branch` inputs; each fork's page is overwritten by that fork's next run.
 
 This benchmark is both
@@ -139,8 +139,8 @@ crate comes from):
 
 | engine | source | benched on |
 |---|---|---|
-| `infino-0.11.26` | the published crate, pinned to the 0.11.26 release | every run |
-| `infino-main` | `infino-ai/infino` at `main`, path-depped at `../../../infino-main` | every run, and as the baseline on a branch run |
+| `infino-0.11.26` | the published crate, pinned to the 0.11.26 release | every nightly |
+| `infino-main` | `infino-ai/infino` at `main`, path-depped at `../../../infino-main` | every nightly, and as the baseline on a branch run |
 | `infino-branch` | the repo/ref dispatched into the workflow, path-depped at `../../../infino` | branch and fork runs only |
 
 `infino-branch-last` is not a fourth build: it re-benches the `infino-branch`
@@ -181,14 +181,14 @@ table is `INFINO_BENCH_TABLE`, defaulting to `<corpus>_<scale>` on a scale run
 make index bench-full ENGINES=infino-platform CORPUS=$PWD/corpus.json
 ```
 
-The bench workflow runs on demand only, and this column is opt-in through
+The nightly does not bench this column on its own schedule. It's opt-in, through
 the workflow's `platform` dispatch input:
 
-- `off` (the default): no platform column.
+- `off` (the default, and always the scheduled nightly): no platform column.
 - `compare`: adds `infino-platform` as the last engine of that run, next to
   whatever else the run benches. On a main run (`infino_branch` = `main`) the
   results publish as the official results, platform column included, until the
-  next main run replaces them. On a branch run the column shows on
+  next scheduled nightly replaces them. On a branch run the column shows on
   the fork page, same-box or not.
 - `only`: benches `infino-platform` alone, publishes nothing, and writes
   per-command latency to the job summary. A quick check that the column works
